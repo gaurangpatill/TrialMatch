@@ -29,9 +29,10 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - _Official MassGIS geometry run: 2604/2604 unique EJ block groups over 6 pages, zero duplicates/missing/invalid geometry, polygon-centroid fallback for 2604 features, and 187 resolved/0 unresolved municipality representative analytical points. Snapshot: `backend/app/geography/data/municipality_ej_representative_points.json` (81,866 bytes). Genuine SciPy 1.15.2 scenario (187 included, 0 excluded; equal abstract unit cost, budget/events 3, 25 km, lambda 0.6) was optimal/native 0/gap 0.0, selected Hudson/Reading/Sharon, objective 1,639,905.9010591828, covered EJ-subset population proxy 2,636,354 across 87 communities; both greedy baselines selected Clinton/Reading/Walpole, objective 1,636,717.6488802643, population 2,628,696 across 85 communities._
   - _Requirements: R3_
 
-- [ ] **G5. Implement `GET /api/geo`**
+- [x] **G5. Implement `GET /api/geo`**
   - Return contract-compliant GeoJSON, null geometry when unavailable, raw/derived labels, and freshness.
   - Add success, filter, missing-geometry, validation, and source-summary API tests.
+  - _Verified 2026-10-24 with Python 3.11.10, FastAPI 0.115.12, Pydantic 2.10.6, and SciPy 1.15.2: the combined geography/optimizer suite passed 104 tests and geography compileall passed. Actual TestClient `GET /api/geo` returned HTTP 200 with 187 deterministic municipality Point features, 187 resolved/0 unresolved, genuine MassGIS source/provenance and EJ-subset fields; with no export present, availability was false and all clinical/access counts and feature access values were null. Export tests cover array/records/items/sites envelopes, nullable aliases, status normalization, coordinate quarantine, contradictory country/state quarantine, filtering, and reconciled counts._
   - _Requirements: R2, R3, R5_
 
 - [x] **G6. Implement MILP input and formulation**
@@ -48,9 +49,10 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - _Verified genuine `scipy.optimize.milp` status 0 optimum against exhaustive enumeration: objective 7.0, exhaustive 7.0, selected `('B',)`; no real coordinates are integrated and every test coordinate is labeled `synthetic_test_fixture`._
   - _Requirements: R4, R5_
 
-- [ ] **G8. Implement `POST /api/optimize`**
+- [x] **G8. Implement `POST /api/optimize`**
   - Return exact contract fields, assumptions, model-vs-observed caveat, solver metadata, and infeasible behavior.
   - Add API/contract tests and wire routers only through shared composition.
+  - _Verified 2026-10-24 in the same exact Python 3.11.10 run: actual TestClient `POST /api/optimize` for 3 events, 25 km, lambda 0.6 returned HTTP 200/optimal, native status 0, gap 0.0, selected Hudson/Reading/Sharon, covered 87 municipalities and EJ-subset population proxy 2,636,354 with objective 1,639,905.9010591828. Zero events returned an optimal empty plan. Parameter-change tests proved each request invoked the solver and produced mathematically different results; condition-specific requests returned structured 409 responses rather than implying an unsupported objective._
   - _Requirements: R4, R5_
 
 - [ ] **G9. Build researcher dashboard integration**
