@@ -47,7 +47,7 @@ def test_study_without_cached_criteria_is_unresolved(study_factory, tmp_path):
     result = MatchingService(repository).match(profile).results[0]
 
     assert result.screening_status == ScreeningStatus.UNRESOLVED
-    assert "No validated structured" in result.unresolved_requirements[0]
+    assert "No current validated structured" in result.unresolved_requirements[0]
 
 
 def test_contradictory_classifications_are_surfaced(criterion_factory):

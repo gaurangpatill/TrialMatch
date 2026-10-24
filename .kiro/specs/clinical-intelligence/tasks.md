@@ -53,7 +53,7 @@ Implement on `feature/clinical-intelligence`. Check a task only after its accept
   - Add API/contract tests and register only through the shared composition boundary.
   - _Requirements: R5, R6_
 
-- [ ] **C9. Workstream verification and handoff**
+- [x] **C9. Workstream verification and handoff**
   - Run targeted and complete clinical pytest suites; record exact commands/results.
   - Verify provenance against observed data and distinguish fixtures from real records.
   - Update limitations and Kiro usage with facts only.

@@ -36,7 +36,8 @@ def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None
     identification = source.protocol.identification
     if not identification.brief_title or not identification.brief_title.strip():
         raise StudyNormalizationError(f"{identification.nct_id}: BriefTitle is missing")
-    if not source.protocol.status.overall_status:
+    status = source.protocol.status.overall_status
+    if not status or not status.strip():
         raise StudyNormalizationError(f"{identification.nct_id}: OverallStatus is missing")
 
     locations: list[StudyLocation] = []
@@ -74,7 +75,7 @@ def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None
     return Study(
         nct_id=identification.nct_id,
         title=identification.brief_title.strip(),
-        overall_status=source.protocol.status.overall_status,
+        overall_status=status.strip(),
         conditions=[value.strip() for value in source.protocol.conditions.conditions if value.strip()],
         phases=[value.strip() for value in source.protocol.design.phases if value.strip()],
         eligibility_criteria=eligibility.eligibility_criteria,

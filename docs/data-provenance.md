@@ -14,6 +14,12 @@ The starter query returns at most 20 records. Complete API ingestion must consum
 
 Detailed records should preserve NCT ID, title, status, conditions, phase, eligibility text, minimum/maximum age, sex restrictions, parsed inclusion/exclusion source text, facilities/locations, contacts when present, source URL, and retrieval timestamp. Unavailable fields remain null/empty according to the normalized schema; they are never inferred.
 
+### Verified clinical acquisition — 2026-10-24
+
+The feature-branch ingestion command completed at `2026-10-24T18:16:31.903128Z` using the effective query `https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&filter.overallStatus=RECRUITING&pageSize=1000&fields=NCTId%2CBriefTitle%2COverallStatus%2CCondition%2CPhase&format=json`. It consumed four token-paginated pages and observed 3,145 records: 3,145 accepted, zero duplicate NCT identifiers, and zero schema exclusions. A deterministic cohort of 20 NCT IDs received individual detail retrieval; all 20 completed, using validated cache entries where available. The manifest records observed missing-field totals.
+
+An earlier attempt completed the list but retrieved only 19 of 20 details because one request remained rate-limited with HTTP 429 after bounded retries. That attempt was correctly marked partial; a later retry completed. Counts describe this acquisition timestamp and can change with ClinicalTrials.gov. No raw snapshot checksum is claimed because the generated SQLite/API caches are ignored rather than committed.
+
 ## MassGIS Environmental Justice block groups
 
 - **Authority:** Massachusetts Bureau of Geographic Information (MassGIS), EJ2020 ArcGIS MapServer

@@ -14,13 +14,6 @@ from .models import IngestionReport, IngestionStatus, Study
 from .normalize import StudyNormalizationError, normalize_study, source_missing_values, source_structured_criteria
 
 
-OFFICIAL_QUERY_URL = (
-    "https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&"
-    "filter.overallStatus=RECRUITING&pageSize=20&"
-    "fields=NCTId,BriefTitle,OverallStatus,Condition,Phase"
-)
-
-
 class ClinicalIngestionService:
     def __init__(self, client: ClinicalTrialsClient, repository: ClinicalRepository):
         self.client = client
@@ -85,20 +78,28 @@ class ClinicalIngestionService:
                 errors.append(f"detail {nct_id}: {type(exc).__name__}: {exc}")
 
         studies = list(normalized.values())
-        self.repository.upsert_studies(studies)
-        for study in studies:
-            criteria = source_structured_criteria(study, created_at=retrieval_time)
-            if criteria:
+        publication_complete = (
+            bool(studies)
+            and source_complete
+            and not exclusions
+            and detail_retrieved == len(selected_ids)
+        )
+        if publication_complete:
+            self.repository.replace_complete_snapshot(studies)
+            for study in studies:
+                criteria = source_structured_criteria(study, created_at=retrieval_time)
                 self.repository.replace_criteria(study.nct_id, "source_structured", criteria)
 
         if not studies:
             status = IngestionStatus.FAILED
-        elif source_complete and detail_retrieved == len(selected_ids):
+        elif publication_complete:
             status = IngestionStatus.COMPLETE
         else:
             status = IngestionStatus.PARTIAL
         report = IngestionReport(
-            source_url=OFFICIAL_QUERY_URL,
+            source_url=self.client.list_query_url(page_size),
+            effective_page_size=page_size,
+            pagination_completed=source_complete,
             started_at=started_at,
             completed_at=datetime.now(UTC),
             status=status,
@@ -139,8 +140,12 @@ def update_manifest(report: IngestionReport, path: str | Path) -> None:
         "accepted_record_count": report.accepted_record_count,
         "duplicate_identifier_count": report.duplicate_identifier_count,
         "missing_value_counts": report.missing_value_counts,
-        "schema_valid": not report.excluded_records,
+        "schema_valid": report.pagination_completed and not report.excluded_records,
         "raw_sha256": None,
+        "effective_query_url": report.source_url,
+        "effective_page_size": report.effective_page_size,
+        "page_count": report.page_count,
+        "pagination_completed": report.pagination_completed,
         "filters_or_exclusions": [
             "query.locn=Massachusetts",
             "filter.overallStatus=RECRUITING",

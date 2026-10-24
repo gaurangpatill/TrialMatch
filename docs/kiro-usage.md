@@ -16,6 +16,9 @@ These artifacts establish spec-driven development; they do not prove that future
 | Date | Workstream | Kiro capability | Verifiable artifact/result |
 |---|---|---|---|
 | 2026-10-24 | Shared scaffold | Steering and spec-driven planning | `.kiro/steering/project.md`; both workstream spec directories |
+| 2026-10-24 | Clinical Intelligence | Spec-guided implementation and verification | Tasks C1–C4 and C6–C8 complete; 60-test pytest suite including Hypothesis properties; live LLM run blocked |
+| 2026-10-24 | Patient Portal | Frontend contract and safety verification | 5 Vitest proxy tests, TypeScript check, production build, and zero-vulnerability npm audit |
+| 2026-10-24 | Clinical Intelligence | Context gathering and semantic review | Branch/spec audit followed by confirmed safety-boundary fixes before final commit |
 
 ## Optional capabilities
 

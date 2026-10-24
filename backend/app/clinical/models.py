@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -168,6 +169,8 @@ class IngestionStatus(str, Enum):
 
 class IngestionReport(StrictModel):
     source_url: str
+    effective_page_size: int = Field(ge=1, le=1000)
+    pagination_completed: bool
     started_at: datetime
     completed_at: datetime
     status: IngestionStatus
@@ -235,43 +238,114 @@ class Predicate(StrictModel):
     value: Scalar | None = None
     lower: float | None = None
     upper: float | None = None
-    include_lower: bool = True
-    include_upper: bool = True
+    include_lower: bool | None = None
+    include_upper: bool | None = None
     unit: str | None = None
     temporal_window_days: int | None = Field(default=None, gt=0)
     children: list[Predicate] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_operator_shape(self) -> Predicate:
-        if self.operator in {CriterionOperator.ALL, CriterionOperator.ANY}:
-            if len(self.children) < 2:
-                raise ValueError("compound predicates require at least two children")
-        elif self.children:
-            raise ValueError("only compound predicates may contain children")
-
-        if self.operator == CriterionOperator.BETWEEN:
-            if self.lower is None or self.upper is None:
-                raise ValueError("between requires lower and upper")
-            if self.lower > self.upper:
-                raise ValueError("between lower cannot exceed upper")
-        if self.operator == CriterionOperator.WITHIN_DAYS and self.temporal_window_days is None:
-            raise ValueError("within_days requires temporal_window_days")
-        if self.attribute in {
-            CriterionAttribute.CONDITION,
-            CriterionAttribute.MEDICATION,
-            CriterionAttribute.PROCEDURE,
-            CriterionAttribute.LABORATORY_VALUE,
-        } and not self.target:
-            raise ValueError(f"{self.attribute.value} predicates require target")
-        if self.operator in {
+        compound = {CriterionOperator.ALL, CriterionOperator.ANY}
+        scalar = {
             CriterionOperator.EQUALS,
             CriterionOperator.NOT_EQUALS,
             CriterionOperator.GREATER_THAN,
             CriterionOperator.GREATER_THAN_OR_EQUAL,
             CriterionOperator.LESS_THAN,
             CriterionOperator.LESS_THAN_OR_EQUAL,
-        } and self.value is None:
-            raise ValueError(f"{self.operator.value} requires value")
+        }
+        numeric = scalar | {CriterionOperator.BETWEEN}
+        facts = {CriterionOperator.PRESENT, CriterionOperator.ABSENT, CriterionOperator.WITHIN_DAYS}
+
+        numeric_values = [item for item in (self.value, self.lower, self.upper) if isinstance(item, (int, float)) and not isinstance(item, bool)]
+        if any(not math.isfinite(item) for item in numeric_values):
+            raise ValueError("numeric predicate values and bounds must be finite")
+
+        if self.operator != CriterionOperator.BETWEEN and (
+            self.include_lower is not None or self.include_upper is not None
+        ):
+            raise ValueError("include_lower/include_upper are allowed only for between")
+
+        if self.operator in compound:
+            if len(self.children) < 2:
+                raise ValueError("compound predicates require at least two children")
+            if self.attribute != CriterionAttribute.UNSUPPORTED:
+                raise ValueError("compound predicates must use the unsupported container attribute")
+            if any(
+                value is not None
+                for value in (self.target, self.value, self.lower, self.upper, self.unit, self.temporal_window_days)
+            ):
+                raise ValueError("compound predicates cannot contain scalar fields")
+            return self
+        if self.children:
+            raise ValueError("only compound predicates may contain children")
+
+        if self.attribute == CriterionAttribute.UNSUPPORTED or self.operator == CriterionOperator.UNSUPPORTED:
+            if self.attribute != CriterionAttribute.UNSUPPORTED or self.operator != CriterionOperator.UNSUPPORTED:
+                raise ValueError("unsupported predicates require both unsupported attribute and operator")
+            if any(
+                value is not None
+                for value in (self.target, self.value, self.lower, self.upper, self.unit, self.temporal_window_days)
+            ):
+                raise ValueError("unsupported predicates cannot contain evaluable fields")
+            return self
+
+        if self.operator == CriterionOperator.BETWEEN:
+            if self.lower is None or self.upper is None:
+                raise ValueError("between requires lower and upper")
+            if self.lower > self.upper:
+                raise ValueError("between lower cannot exceed upper")
+            if self.value is not None:
+                raise ValueError("between cannot also contain value")
+        elif self.lower is not None or self.upper is not None:
+            raise ValueError("lower and upper are allowed only for between")
+
+        if self.attribute == CriterionAttribute.AGE_YEARS:
+            if self.operator not in numeric:
+                raise ValueError("age_years requires a numeric comparison operator")
+            if self.target is not None or self.temporal_window_days is not None:
+                raise ValueError("age_years cannot contain target or temporal fields")
+            if self.unit not in {None, "years"}:
+                raise ValueError("age_years unit must be years")
+        elif self.attribute == CriterionAttribute.SEX:
+            if self.operator not in {CriterionOperator.EQUALS, CriterionOperator.NOT_EQUALS}:
+                raise ValueError("sex requires equals or not_equals")
+            if not isinstance(self.value, str):
+                raise ValueError("sex comparison value must be a string")
+            if any(value is not None for value in (self.target, self.lower, self.upper, self.unit, self.temporal_window_days)):
+                raise ValueError("sex cannot contain numeric, target, unit, or temporal fields")
+        elif self.attribute in {
+            CriterionAttribute.CONDITION,
+            CriterionAttribute.MEDICATION,
+            CriterionAttribute.PROCEDURE,
+        }:
+            if self.operator not in facts:
+                raise ValueError(f"{self.attribute.value} requires a fact operator")
+            if not self.target:
+                raise ValueError(f"{self.attribute.value} predicates require target")
+            if any(value is not None for value in (self.value, self.lower, self.upper, self.unit)):
+                raise ValueError("fact predicates cannot contain scalar comparison fields")
+            if self.operator == CriterionOperator.WITHIN_DAYS:
+                if self.temporal_window_days is None:
+                    raise ValueError("within_days requires temporal_window_days")
+            elif self.temporal_window_days is not None:
+                raise ValueError("temporal_window_days is allowed only for within_days")
+        elif self.attribute == CriterionAttribute.LABORATORY_VALUE:
+            if self.operator not in numeric:
+                raise ValueError("laboratory_value requires a numeric comparison operator")
+            if not self.target or not self.unit:
+                raise ValueError("laboratory_value requires target and unit")
+            if self.temporal_window_days is not None:
+                raise ValueError("laboratory_value temporal comparison is unsupported")
+
+        if self.operator in scalar:
+            if self.value is None:
+                raise ValueError(f"{self.operator.value} requires value")
+            if self.attribute in {CriterionAttribute.AGE_YEARS, CriterionAttribute.LABORATORY_VALUE} and (
+                not isinstance(self.value, (int, float)) or isinstance(self.value, bool)
+            ):
+                raise ValueError("numeric predicates require a numeric comparison value")
         return self
 
 
@@ -303,18 +377,29 @@ class ExtractionPayload(StrictModel):
     criteria: list[ExtractionCandidate]
 
 
-class SyntheticPatient(StrictModel):
-    profile_id: str = Field(min_length=1, max_length=100)
-    synthetic: Literal[True]
+class PatientFacts(StrictModel):
     age_years: float | None = Field(default=None, ge=0, le=125)
     sex: str | None = None
     conditions: list[str] = Field(default_factory=list)
     medications: list[str] = Field(default_factory=list)
     procedures: list[str] = Field(default_factory=list)
-    laboratory_values: dict[str, float] = Field(default_factory=dict)
+    absent_conditions: list[str] = Field(default_factory=list)
+    absent_medications: list[str] = Field(default_factory=list)
+    absent_procedures: list[str] = Field(default_factory=list)
+    condition_days_ago: dict[str, StrictFloat | StrictInt] = Field(default_factory=dict)
+    medication_days_ago: dict[str, StrictFloat | StrictInt] = Field(default_factory=dict)
+    procedure_days_ago: dict[str, StrictFloat | StrictInt] = Field(default_factory=dict)
+    laboratory_values: dict[str, StrictFloat | StrictInt] = Field(default_factory=dict)
     attributes: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("conditions", "medications", "procedures")
+    @field_validator(
+        "conditions",
+        "medications",
+        "procedures",
+        "absent_conditions",
+        "absent_medications",
+        "absent_procedures",
+    )
     @classmethod
     def unique_normalized_facts(cls, values: list[str]) -> list[str]:
         result: list[str] = []
@@ -329,17 +414,59 @@ class SyntheticPatient(StrictModel):
                 result.append(cleaned)
         return result
 
+    @field_validator("condition_days_ago", "medication_days_ago", "procedure_days_ago")
+    @classmethod
+    def validate_days_ago(
+        cls, values: dict[str, float | int]
+    ) -> dict[str, float | int]:
+        cleaned: dict[str, float | int] = {}
+        normalized_keys: set[str] = set()
+        for key, value in values.items():
+            cleaned_key = key.strip()
+            normalized = cleaned_key.casefold()
+            if not cleaned_key:
+                raise ValueError("dated fact names cannot be blank")
+            if normalized in normalized_keys:
+                raise ValueError("dated fact names must be unique ignoring case")
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("days-ago values must be finite and non-negative")
+            normalized_keys.add(normalized)
+            cleaned[cleaned_key] = value
+        return cleaned
 
-class PatientRequest(StrictModel):
+    @field_validator("laboratory_values")
+    @classmethod
+    def validate_laboratory_values(
+        cls, values: dict[str, float | int]
+    ) -> dict[str, float | int]:
+        if any(not math.isfinite(value) for value in values.values()):
+            raise ValueError("laboratory values must be finite")
+        return values
+
+    @model_validator(mode="after")
+    def reject_contradictory_facts(self) -> PatientFacts:
+        for name in ("condition", "medication", "procedure"):
+            present = {value.casefold() for value in getattr(self, f"{name}s")}
+            absent = {value.casefold() for value in getattr(self, f"absent_{name}s")}
+            conflicts = present & absent
+            if conflicts:
+                raise ValueError(f"facts cannot be both present and absent: {sorted(conflicts)}")
+            dated = {value.casefold() for value in getattr(self, f"{name}_days_ago")}
+            if not dated <= present:
+                raise ValueError(
+                    f"dated {name} facts must also be explicitly present: {sorted(dated - present)}"
+                )
+        return self
+
+
+class SyntheticPatient(PatientFacts):
     profile_id: str = Field(min_length=1, max_length=100)
-    synthetic: bool
-    age_years: float | None = Field(default=None, ge=0, le=125)
-    sex: str | None = None
-    conditions: list[str] = Field(default_factory=list)
-    medications: list[str] = Field(default_factory=list)
-    procedures: list[str] = Field(default_factory=list)
-    laboratory_values: dict[str, float] = Field(default_factory=dict)
-    attributes: dict[str, Any] = Field(default_factory=dict)
+    synthetic: Literal[True]
+
+
+class PatientRequest(PatientFacts):
+    profile_id: str = Field(min_length=1, max_length=100)
+    synthetic: StrictBool
 
 
 class MatchRequest(StrictModel):

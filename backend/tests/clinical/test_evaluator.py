@@ -60,7 +60,7 @@ def test_exclusion_polarity_for_known_condition(criterion_factory):
     assert evaluate_criterion(criterion, patient(conditions=["pregnancy"])).status == CriterionStatus.NOT_MET
     assert (
         evaluate_criterion(
-            criterion, patient(attributes={"absent_conditions": ["pregnancy"]})
+            criterion, patient(absent_conditions=["pregnancy"])
         ).status
         == CriterionStatus.MET
     )
@@ -76,7 +76,7 @@ def test_negated_condition_requires_explicit_absence(criterion_factory):
     assert evaluate_criterion(criterion, patient()).status == CriterionStatus.UNKNOWN
     assert (
         evaluate_criterion(
-            criterion, patient(attributes={"absent_conditions": ["diabetes"]})
+            criterion, patient(absent_conditions=["diabetes"])
         ).status
         == CriterionStatus.MET
     )
@@ -129,7 +129,7 @@ def test_bounded_duration_requires_dated_fact(criterion_factory):
             criterion,
             patient(
                 procedures=["major surgery"],
-                attributes={"procedure_days_ago": {"major surgery": 10}},
+                procedure_days_ago={"major surgery": 10},
             ),
         ).status
         == CriterionStatus.NOT_MET
@@ -139,7 +139,7 @@ def test_bounded_duration_requires_dated_fact(criterion_factory):
             criterion,
             patient(
                 procedures=["major surgery"],
-                attributes={"procedure_days_ago": {"major surgery": 31}},
+                procedure_days_ago={"major surgery": 31},
             ),
         ).status
         == CriterionStatus.MET

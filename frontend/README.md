@@ -3,7 +3,8 @@
 Shared Next.js, TypeScript, Tailwind CSS, and MapLibre GL JS application shell. It intentionally contains no patient or researcher feature engine on `main`.
 
 ```bash
-npm install
+npm ci
+npm test
 npm run typecheck
 npm run build
 ```

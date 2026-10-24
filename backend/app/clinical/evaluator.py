@@ -79,9 +79,12 @@ def evaluate_predicate(predicate: Predicate, patient: SyntheticPatient) -> Predi
         return _evaluate_fact(predicate, patient)
     if predicate.attribute == CriterionAttribute.LABORATORY_VALUE:
         assert predicate.target is not None
-        values = {key.casefold(): value for key, value in patient.laboratory_values.items()}
-        value = values.get(predicate.target.casefold())
-        return _evaluate_numeric(value, predicate, f"laboratory value {predicate.target}")
+        # The shared API currently carries bare numbers, not unit-bearing lab facts.
+        # A unit-sensitive protocol comparison cannot safely produce a definitive state.
+        return PredicateResult(
+            None,
+            f"laboratory value {predicate.target} lacks a validated patient unit compatible with {predicate.unit}",
+        )
     return PredicateResult(None, "the criterion attribute is unsupported")
 
 
@@ -109,11 +112,9 @@ def _evaluate_fact(predicate: Predicate, patient: SyntheticPatient) -> Predicate
         value.casefold()
         for value in getattr(patient, f"{attribute_name}s")
     }
-    absent_key = f"absent_{attribute_name}s"
-    absent_raw = patient.attributes.get(absent_key, [])
     absent_values = {
-        str(value).casefold() for value in absent_raw
-    } if isinstance(absent_raw, list) else set()
+        value.casefold() for value in getattr(patient, f"absent_{attribute_name}s")
+    }
     target = predicate.target.casefold()
 
     if predicate.operator == CriterionOperator.WITHIN_DAYS:
@@ -122,7 +123,7 @@ def _evaluate_fact(predicate: Predicate, patient: SyntheticPatient) -> Predicate
         if target not in positive_values:
             return PredicateResult(None, f"presence of {predicate.target} is not explicitly known")
         mapping_name = f"{attribute_name}_days_ago"
-        raw_mapping = patient.attributes.get(mapping_name)
+        raw_mapping = getattr(patient, mapping_name)
         if not isinstance(raw_mapping, dict):
             return PredicateResult(None, f"dated {attribute_name} information is not provided")
         days_ago = next(
@@ -165,13 +166,15 @@ def _evaluate_numeric(value: float | None, predicate: Predicate, label: str) -> 
     comparison = predicate.value
     if operator == CriterionOperator.BETWEEN:
         assert predicate.lower is not None and predicate.upper is not None
-        lower_ok = value >= predicate.lower if predicate.include_lower else value > predicate.lower
-        upper_ok = value <= predicate.upper if predicate.include_upper else value < predicate.upper
+        lower_inclusive = predicate.include_lower is not False
+        upper_inclusive = predicate.include_upper is not False
+        lower_ok = value >= predicate.lower if lower_inclusive else value > predicate.lower
+        upper_ok = value <= predicate.upper if upper_inclusive else value < predicate.upper
         return PredicateResult(
             lower_ok and upper_ok,
             f"{label} {value:g} is compared with "
-            f"{'[' if predicate.include_lower else '('}{predicate.lower:g}, {predicate.upper:g}"
-            f"{']' if predicate.include_upper else ')'}",
+            f"{'[' if lower_inclusive else '('}{predicate.lower:g}, {predicate.upper:g}"
+            f"{']' if upper_inclusive else ')'}",
         )
     if not isinstance(comparison, (int, float)) or isinstance(comparison, bool):
         return PredicateResult(None, f"numeric comparison value for {label} is invalid")

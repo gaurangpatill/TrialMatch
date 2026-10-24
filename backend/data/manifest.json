@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0",
   "project": "TrialMatch",
-  "last_updated_utc": "2026-10-24T17:50:25.591629+00:00",
+  "last_updated_utc": "2026-10-24T18:16:31.903128+00:00",
   "sources": [
     {
       "id": "clinicaltrials-gov-ma-recruiting",
@@ -45,7 +45,7 @@
       ],
       "acquisition": {
         "status": "complete",
-        "acquired_at_utc": "2026-10-24T17:50:25.591629+00:00",
+        "acquired_at_utc": "2026-10-24T18:16:31.903128+00:00",
         "observed_record_count": 3145,
         "accepted_record_count": 3145,
         "duplicate_identifier_count": 0,
@@ -61,6 +61,10 @@
         },
         "schema_valid": true,
         "raw_sha256": null,
+        "effective_query_url": "https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&filter.overallStatus=RECRUITING&pageSize=1000&fields=NCTId%2CBriefTitle%2COverallStatus%2CCondition%2CPhase&format=json",
+        "effective_page_size": 1000,
+        "page_count": 4,
+        "pagination_completed": true,
         "filters_or_exclusions": [
           "query.locn=Massachusetts",
           "filter.overallStatus=RECRUITING",

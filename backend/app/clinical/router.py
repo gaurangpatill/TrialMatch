@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from .database import ClinicalRepository
 from .dependencies import get_repository
-from .matching import MatchingService
+from .matching import MatchingService, UnknownTrialIds
 from .models import (
     DataFreshness,
     ErrorBody,
@@ -96,8 +96,23 @@ def match_trials(
         )
         return JSONResponse(status_code=400, content=error.model_dump(mode="json"))
     patient = SyntheticPatient.model_validate(request.patient.model_dump())
-    return MatchingService(repository).match(
-        patient,
-        trial_ids=request.trial_ids,
-        limit=request.limit,
-    )
+    try:
+        return MatchingService(repository).match(
+            patient,
+            trial_ids=request.trial_ids,
+            limit=request.limit,
+        )
+    except UnknownTrialIds as exc:
+        error = ErrorResponse(
+            error=ErrorBody(
+                code="TRIALS_NOT_FOUND",
+                message="One or more requested trials are not present in the local source snapshot.",
+                details=[
+                    ErrorDetail(field="trial_ids", reason=f"not found: {identifier}")
+                    for identifier in exc.identifiers
+                ],
+                retryable=False,
+                request_id=uuid.uuid4().hex,
+            )
+        )
+        return JSONResponse(status_code=404, content=error.model_dump(mode="json"))

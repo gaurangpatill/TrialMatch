@@ -7,6 +7,7 @@ import json
 import os
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import ValidationError
@@ -64,6 +65,12 @@ class OpenAICompatibleProvider:
     ):
         if not model or not api_key or not base_url:
             raise ProviderUnavailable("LLM_MODEL, LLM_API_KEY, and LLM_BASE_URL are required")
+        parsed_url = urlparse(base_url)
+        loopback_hosts = {"localhost", "127.0.0.1", "::1"}
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+            raise ProviderUnavailable("LLM_BASE_URL must be an absolute HTTP(S) URL")
+        if parsed_url.scheme != "https" and parsed_url.hostname not in loopback_hosts:
+            raise ProviderUnavailable("remote LLM_BASE_URL must use HTTPS to protect credentials")
         self.model = model
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from collections.abc import Awaitable, Callable
@@ -14,7 +15,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from .models import SourcePage
+from .models import SourcePage, SourceStudy
 
 
 DEFAULT_BASE_URL = "https://clinicaltrials.gov/api/v2"
@@ -129,18 +130,13 @@ class ClinicalTrialsClient:
             raise ValueError("page_size must be between 1 and 1000")
         records: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
+        seen_hashes: dict[str, str] = {}
         seen_tokens: set[str] = set()
         duplicate_count = 0
         page_count = 0
         token: str | None = None
         while True:
-            params: dict[str, Any] = {
-                "query.locn": "Massachusetts",
-                "filter.overallStatus": "RECRUITING",
-                "pageSize": page_size,
-                "fields": LIST_FIELDS,
-                "format": "json",
-            }
+            params = self.list_parameters(page_size)
             if token:
                 params["pageToken"] = token
             try:
@@ -160,11 +156,22 @@ class ClinicalTrialsClient:
                     .get("identificationModule", {})
                     .get("nctId")
                 )
-                if nct_id and nct_id in seen_ids:
-                    duplicate_count += 1
-                    continue
                 if nct_id:
+                    canonical_hash = hashlib.sha256(
+                        json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+                    ).hexdigest()
+                    if nct_id in seen_ids:
+                        duplicate_count += 1
+                        if seen_hashes[nct_id] != canonical_hash:
+                            raise PartialFetchError(
+                                message=f"conflicting duplicate source record for {nct_id}",
+                                records=records,
+                                page_count=page_count,
+                                duplicate_identifier_count=duplicate_count,
+                            )
+                        continue
                     seen_ids.add(nct_id)
+                    seen_hashes[nct_id] = canonical_hash
                 records.append(record)
             next_token = envelope.next_page_token
             if not next_token:
@@ -179,6 +186,41 @@ class ClinicalTrialsClient:
             seen_tokens.add(next_token)
             token = next_token
 
+    def list_parameters(self, page_size: int) -> dict[str, Any]:
+        return {
+            "query.locn": "Massachusetts",
+            "filter.overallStatus": "RECRUITING",
+            "pageSize": page_size,
+            "fields": LIST_FIELDS,
+            "format": "json",
+        }
+
+    def list_query_url(self, page_size: int) -> str:
+        return str(httpx.URL(f"{self.base_url}/studies", params=self.list_parameters(page_size)))
+
+    @staticmethod
+    def _validate_detail(record: dict[str, Any], requested_nct_id: str) -> None:
+        try:
+            parsed = SourceStudy.model_validate(record)
+        except ValidationError as exc:
+            raise InvalidSourcePayloadError(
+                f"invalid detail payload for {requested_nct_id}: {exc}"
+            ) from exc
+        received_nct_id = parsed.protocol.identification.nct_id
+        if received_nct_id != requested_nct_id:
+            raise InvalidSourcePayloadError(
+                f"detail identifier mismatch: requested {requested_nct_id}, received {received_nct_id}"
+            )
+        if not parsed.protocol.identification.brief_title or not parsed.protocol.identification.brief_title.strip():
+            raise InvalidSourcePayloadError(
+                f"detail {requested_nct_id} is missing required BriefTitle"
+            )
+        status = parsed.protocol.status.overall_status
+        if not status or not status.strip():
+            raise InvalidSourcePayloadError(
+                f"detail {requested_nct_id} is missing required OverallStatus"
+            )
+
     async def fetch_detail(self, nct_id: str, *, use_cache: bool = True) -> DetailResult:
         if not nct_id.startswith("NCT") or len(nct_id) != 11 or not nct_id[3:].isdigit():
             raise ValueError(f"invalid NCT identifier: {nct_id}")
@@ -186,20 +228,32 @@ class ClinicalTrialsClient:
         if use_cache and cache_path.exists():
             try:
                 payload = json.loads(cache_path.read_text())
+                record = payload["study"]
+                if not isinstance(record, dict):
+                    raise TypeError("cached study must be an object")
+                self._validate_detail(record, nct_id)
                 return DetailResult(
-                    record=payload["study"],
+                    record=record,
                     retrieved_at=datetime.fromisoformat(payload["retrieved_at"]),
                     from_cache=True,
                 )
-            except (KeyError, ValueError, json.JSONDecodeError):
-                pass
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                ValidationError,
+                InvalidSourcePayloadError,
+                json.JSONDecodeError,
+            ):
+                cache_path.unlink(missing_ok=True)
 
         response = await self._get(f"{self.base_url}/studies/{nct_id}")
         try:
             record = response.json()
             if not isinstance(record, dict):
                 raise TypeError("detail response must be an object")
-        except (ValueError, TypeError) as exc:
+            self._validate_detail(record, nct_id)
+        except (ValueError, TypeError, InvalidSourcePayloadError) as exc:
             raise InvalidSourcePayloadError(f"invalid detail payload for {nct_id}: {exc}") from exc
         retrieved_at = datetime.now(UTC)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

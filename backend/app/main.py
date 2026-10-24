@@ -25,7 +25,7 @@ class HealthResponse(BaseModel):
 app = FastAPI(
     title="TrialMatch API",
     description="Source-grounded TrialMatch research-access prototype API.",
-    version="0.2.0",
+    version="0.1.0",
 )
 
 

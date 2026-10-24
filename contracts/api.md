@@ -129,6 +129,12 @@ Clinical Intelligence ownership. Evaluates a synthetic profile against cached st
     "conditions": ["example condition"],
     "medications": [],
     "procedures": [],
+    "absent_conditions": [],
+    "absent_medications": [],
+    "absent_procedures": [],
+    "condition_days_ago": {},
+    "medication_days_ago": {},
+    "procedure_days_ago": {},
     "laboratory_values": {},
     "attributes": {}
   },
@@ -141,8 +147,11 @@ Request rules:
 
 - `synthetic` must equal `true`; otherwise reject with `400`.
 - `age_years` is decimal or null, range `0..125`.
-- Clinical fact lists contain explicitly asserted facts only; absence is not negation.
-- `trial_ids` is optional, unique, maximum 100. If omitted, documented search candidates are used.
+- Clinical fact lists contain explicitly asserted facts only; absence from a positive list is not negation.
+- `absent_conditions`, `absent_medications`, and `absent_procedures` contain only facts explicitly known to be absent; a fact present in both positive and absent lists is rejected.
+- The three `*_days_ago` maps contain finite non-negative elapsed-day values for explicitly present facts and support bounded temporal predicates.
+- `laboratory_values` contains bare numeric values under this contract. Unit-sensitive laboratory criteria therefore remain `unknown` until a coordinated unit-bearing fact schema is introduced.
+- `trial_ids` is optional, unique, maximum 100. Unknown requested IDs return `404`. If omitted, documented search candidates are used.
 - `limit` defaults to 20 and is `1..100`.
 - Unsupported extra clinical attributes may be preserved under `attributes` but evaluate as `unknown` unless explicitly supported.
 
