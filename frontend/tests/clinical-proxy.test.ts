@@ -163,6 +163,35 @@ describe("clinical API proxies", () => {
     expect(valid.status).toBe(200);
     expect(invalid.status).toBe(502);
   });
+  it("accepts source descriptions and cached backend summaries in search results", async () => {
+    const item = {
+      nct_id: "NCT00000001",
+      title: "Synthetic study",
+      overall_status: "RECRUITING",
+      conditions: ["Example condition"],
+      phases: ["NOT_APPLICABLE"],
+      source_description: "Official source purpose text.",
+      plain_language_summary: "Cached source-grounded plain-English summary.",
+      minimum_age: "18 Years",
+      maximum_age: null,
+      sex: "ALL",
+      locations: [],
+      source_url: "https://clinicaltrials.gov/study/NCT00000001",
+      retrieved_at: "2026-10-24T18:00:00Z",
+      detail_status: "retrieved",
+      screening_coverage_status: "partial",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({
+      items: [item],
+      pagination: {page: 1, page_size: 20, total_items: 1, total_pages: 1},
+      data_freshness: {retrieved_at: "2026-10-24T18:00:00Z", source: "ClinicalTrials.gov"},
+    })));
+
+    const response = await GET(new Request("http://trialmatch.test/api/trials"));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).items[0].plain_language_summary).toContain("source-grounded");
+  });
 });
 
 

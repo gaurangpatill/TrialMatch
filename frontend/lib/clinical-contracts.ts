@@ -44,6 +44,8 @@ export type TrialSummary = {
   overall_status: string;
   conditions: string[];
   phases: string[];
+  source_description?: string | null;
+  plain_language_summary?: string | null;
   minimum_age: string | null;
   maximum_age: string | null;
   sex: string | null;
@@ -61,6 +63,8 @@ export type TrialDetail = {
   conditions: string[];
   phases: string[];
   eligibility_criteria: string | null;
+  source_description?: string | null;
+  plain_language_summary?: string | null;
   minimum_age: string | null;
   maximum_age: string | null;
   sex: string | null;
