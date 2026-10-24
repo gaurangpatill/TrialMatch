@@ -40,6 +40,7 @@ Acceptance criteria:
 3. THE SYSTEM SHALL map only an explicit supported vocabulary; complex or unsupported concepts SHALL remain unknown/unstructured.
 4. THE SYSTEM SHALL cache accepted extractions using study/source version and extraction schema/model identity.
 5. IF the LLM provider is disabled or unavailable, THEN cached structured criteria and deterministic functionality SHALL remain usable, and uncached extraction SHALL fail safely.
+6. THE SYSTEM SHALL persist extraction coverage independently of criterion count, require explicit protocol-item accounting with verbatim evidence and deterministic source-item identities, and SHALL NOT mark coverage complete merely because a provider returned successfully. `potential_match` SHALL require a separate persisted independent coverage approval.
 
 ### R4 — Deterministic three-state evaluation
 
@@ -65,6 +66,7 @@ Acceptance criteria:
 3. THE SYSTEM SHALL NOT emit numerical eligibility probabilities or confirmed-eligibility language.
 4. Every conclusion SHALL link to preserved criterion evidence and SHALL not contradict original protocol wording.
 5. IF evidence is insufficient, THEN the explanation SHALL state that explicitly.
+6. Passing only currently available age, sex, or partially extracted criteria SHALL remain `unresolved`; `potential_match` requires explicit complete current-source protocol coverage with no unsupported, uncovered, unknown, or contradictory requirements.
 
 ### R6 — Verification and operational honesty
 

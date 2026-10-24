@@ -14,6 +14,18 @@ The starter query returns at most 20 records. Complete API ingestion must consum
 
 Detailed records should preserve NCT ID, title, status, conditions, phase, eligibility text, minimum/maximum age, sex restrictions, parsed inclusion/exclusion source text, facilities/locations, contacts when present, source URL, and retrieval timestamp. Unavailable fields remain null/empty according to the normalized schema; they are never inferred.
 
+### Verified clinical acquisition — 2026-10-24
+
+The feature-branch ingestion command completed at `2026-10-24T18:45:18.786215Z` using the effective query `https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&filter.overallStatus=RECRUITING&pageSize=1000&fields=NCTId%2CBriefTitle%2COverallStatus%2CCondition%2CPhase&format=json`. It consumed four token-paginated pages and observed 3,145 records: 3,145 accepted, zero duplicate NCT identifiers, and zero schema exclusions. A deterministic cohort of 100 cancer-related title/condition matches, ordered by NCT ID, received individual detail retrieval; all 100 completed, using validated cache entries where available. The manifest records observed missing-field totals.
+
+An earlier Phase 1 attempt completed the list but retrieved only 19 of 20 details because one request remained rate-limited with HTTP 429 after bounded retries. That attempt was correctly marked partial; later retries completed. Counts describe their acquisition timestamps and can change with ClinicalTrials.gov. No raw snapshot checksum is claimed because the generated SQLite/API caches are ignored rather than committed.
+
+### Massachusetts recruiting-site export
+
+`backend/data/exports/ma_trial_sites.json` was generated at `2026-10-24T18:45:22.224605Z` from the 100-study expanded cohort. It includes only source locations explicitly labeled Massachusetts with site-level status `RECRUITING`: 149 NCT/facility records across 86 studies and 72 normalized facility/location tuples. Forty-six Massachusetts locations with inactive or unknown site status were excluded; no included record lacked a facility name. All 149 exported records carried valid source `geoPoint` pairs, so this cohort has zero unresolved coordinates. TrialMatch did not independently geocode or confirm facility-level coordinate precision.
+
+The primary `records` array includes `coordinate_status` and site status. The one-to-one `geography_records` array removes those extra fields and matches the geographic branch's strict `TrialSite` schema, including `resolution_status`, `coordinate_source`, and `coordinate_source_reference`. Export metadata records source scope, cohort selection, counts, deduplication, freshness, and limitations. This is partial cancer-focused coverage, not a complete Massachusetts trial-site census.
+
 ## MassGIS Environmental Justice block groups
 
 - **Authority:** Massachusetts Bureau of Geographic Information (MassGIS), EJ2020 ArcGIS MapServer
@@ -24,6 +36,12 @@ Detailed records should preserve NCT ID, title, status, conditions, phase, eligi
 The query caps a page at 100 records. Complete ingestion must first inspect service metadata and/or a `returnCountOnly=true` query, then request stable pages using `resultOffset` and `resultRecordCount` while honoring the service transfer limit. Continue until the expected count is reached or a page is empty and `exceededTransferLimit` is false. Detect repeated pages and preserve a stable source object identifier when the service exposes one. The required normalized fields are `MUNICIPALITY`, `TOTAL_POP`, `PCT_MINORITY`, `LIMENGHHPCT`, `BG_MHHI`, `EJ`, and `EJ_CRIT_DESC`.
 
 This dataset contains aggregate community attributes, not patient-level information.
+
+### Verified MassGIS acquisition — 2026-10-24
+
+The committed aggregate snapshot records a complete source run from `2026-10-24T18:41:29.924123Z` through `2026-10-24T18:41:31.739496Z`. The count query expected 2,604 records; six ordered pages fetched and accepted 2,604 unique `OBJECTID` records with zero duplicates, retries, partial failures, or quarantined rows. Missingness was 19 values for `BG_MHHI` and zero for every other required field. The records produced 187 municipality EJ-subset aggregates. No raw snapshot checksum is claimed because no immutable raw response bundle was retained.
+
+A separate geometry acquisition completed at `2026-10-24T18:26:42.761668Z`: 2,604 unique source features, zero missing/invalid geometries, polygon-centroid fallback for all features, and 187 resolved/zero unresolved municipality representative analytical points in EPSG:4326. These points are not verified outreach venues and may fall outside irregular boundaries.
 
 ## Required acquisition record
 

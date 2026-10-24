@@ -6,11 +6,11 @@ TrialMatch is a Hackachusetts 2026 Healthcare & Biotech (H5) research-access pro
 
 ## Product surfaces
 
-- **Patient Portal:** Search recruiting Massachusetts studies, compare synthetic profile facts with protocol criteria, expose unresolved questions, and link every conclusion to source text.
+- **Participant Portal:** Search recruiting Massachusetts studies, review source-backed descriptions, and compare fictional example facts with published protocol requirements while preserving unresolved questions and evidence links.
 - **Researcher Dashboard:** Explore Massachusetts trial-site distribution and aggregate Environmental Justice indicators.
 - **Recruitment Optimizer:** Select modeled outreach locations under explicit resource constraints. Outputs estimate modeled coverage, not observed enrollment outcomes.
 
-No clinical or geographic feature engine is implemented on `main`; this branch contains the shared scaffold and common contracts only.
+The integrated application includes the clinical discovery/screening API, persisted Massachusetts geography, a condition-independent SciPy MILP outreach optimizer, the Participant Portal, and the Researcher Workspace. Deployment still requires a populated persistent clinical SQLite volume; process health alone does not establish data readiness.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ TrialMatch/
 
 See [architecture](docs/architecture.md), [API contracts](contracts/api.md), and [agent ownership](AGENTS.md).
 
-## Agreed stack
+## Tech stack
 
 - Frontend: Next.js, TypeScript, Tailwind CSS, MapLibre GL JS
 - Backend: Python 3.11, FastAPI, Pydantic
@@ -73,11 +73,18 @@ The shared health check is `GET http://localhost:8000/api/health`.
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Environment variables are documented in `.env.example`. Copy it to `.env` or the framework-specific local environment file; never commit populated secrets.
+Environment variables are documented in `.env.example`. Copy it to `.env` or the framework-specific local environment file; never commit populated secrets. `TRIALMATCH_API_BASE_URL` is server-only and preferred for production; `NEXT_PUBLIC_API_BASE_URL` is browser-visible and intended only for local/direct-browser development.
+
+## Deployment and release
+
+- [Render FastAPI and Vercel Next.js deployment](docs/deployment.md)
+- [End-to-end demo/release checklist](docs/release-checklist.md)
+
+Render must use one instance and a persistent `/var/data` disk. The ignored clinical SQLite database is populated by an explicit one-off ingestion command; it is never generated during application startup or committed. Vercel uses same-origin proxying for clinical, geography, and optimizer requests. CI runs the complete backend suite plus frontend tests, typecheck, and production build from clean dependency installs.
 
 ## Validation
 
@@ -86,7 +93,7 @@ Run finite checks from the repository root:
 ```bash
 python -m compileall backend
 pytest
-cd frontend && npm run typecheck && npm run build
+cd frontend && npm test && npm run typecheck && npm run build
 ```
 
 Feature branches add tests alongside implementation. Never report a test, ingestion, integration, or demo as successful unless it was executed and verified.
@@ -104,12 +111,10 @@ git switch -c feature/clinical-intelligence   # Developer A
 
 Internal feature freeze is **October 24, 2026 at 6:30 PM Eastern**. The detailed sprint schedule is in [docs/sprints.md](docs/sprints.md).
 
-## Hackathon compliance
-
-The repository keeps root `.kiro/` content under version control and documents real Kiro usage in [docs/kiro-usage.md]. A final submission still requires a public repository, accessible working demo/test build, sub-three-minute video, accurate feature description, reproducibility verification, and third-party license/privacy/IP review.
-
 ## Documentation
 
+- [Deployment](docs/deployment.md)
+- [Release checklist](docs/release-checklist.md)
 - [Architecture](docs/architecture.md)
 - [Data provenance and validation](docs/data-provenance.md)
 - [API contracts](contracts/api.md)
