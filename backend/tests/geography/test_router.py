@@ -17,7 +17,7 @@ from backend.app.geography.router import (
     geography_router,
     get_geography_runtime,
 )
-from backend.app.geography.sites import load_trial_site_export
+from backend.app.geography.sites import adapt_trial_sites, load_trial_site_export
 from backend.app.optimizer import OptimizationResult, optimize
 
 
@@ -74,6 +74,8 @@ def test_unavailable_export_is_null_not_zero_and_filter_is_deterministic(client:
     assert response.status_code == 200
     payload = response.json()
     assert [row["id"] for row in payload["features"]] == ["Boston"]
+    assert payload["recruiting_site_features"] == []
+    assert payload["available_conditions"] is None
     summary = payload["summary"]
     assert summary["clinical_site_data_available"] is False
     for field in (
@@ -82,6 +84,16 @@ def test_unavailable_export_is_null_not_zero_and_filter_is_deterministic(client:
         "clinical_site_unresolved_count",
         "clinical_site_deduplicated_count",
         "clinical_site_quarantined_count",
+        "clinical_site_source_record_count",
+        "clinical_site_schema_accepted_count",
+        "clinical_site_massachusetts_recruiting_retained_count",
+        "clinical_site_retained_count",
+        "clinical_site_distinct_nct_count",
+        "clinical_site_duplicate_removed_count",
+        "clinical_site_unique_facility_location_count",
+        "clinical_site_export_scope",
+        "clinical_site_export_limitations",
+        "clinical_site_coordinate_precision_limitation",
     ):
         assert summary[field] is None
     properties = payload["features"][0]["properties"]
@@ -214,8 +226,29 @@ def test_available_export_computes_access_and_reports_quarantine(tmp_path: Path)
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["clinical_site_data_available"] is True
-    assert payload["summary"]["clinical_site_accepted_count"] == 1
+    assert payload["available_conditions"] == ["Cancer"]
+    assert len(payload["recruiting_site_features"]) == 1
+    site_feature = payload["recruiting_site_features"][0]
+    assert site_feature["type"] == "Feature"
+    assert site_feature["geometry"]["coordinates"] == pytest.approx(
+        [-71.09124969447807, 42.321809755146745]
+    )
+    assert site_feature["properties"]["nct_id"] == "NCT001"
+    assert site_feature["properties"]["facility"] == "Boston Site"
+    assert site_feature["properties"]["recruiting_status"] == "RECRUITING"
+    assert "not independently verified" in site_feature["properties"]["coordinate_approximation_warning"]
+    summary = payload["summary"]
+    assert summary["clinical_site_data_available"] is True
+    assert summary["clinical_site_source_record_count"] == 2
+    assert summary["clinical_site_schema_accepted_count"] == 1
+    assert summary["clinical_site_massachusetts_recruiting_retained_count"] == 1
+    assert summary["clinical_site_retained_count"] == 1
+    assert summary["clinical_site_distinct_nct_count"] == 1
+    assert summary["clinical_site_duplicate_removed_count"] == 0
+    assert summary["clinical_site_unique_facility_location_count"] == 1
+    assert "scope metadata was not supplied" in summary["clinical_site_export_scope"]
+    assert "not independently verified" in summary["clinical_site_coordinate_precision_limitation"]
+    assert summary["clinical_site_accepted_count"] == 1
     assert payload["summary"]["clinical_site_resolved_count"] == 1
     assert payload["summary"]["clinical_site_unresolved_count"] == 0
     assert payload["summary"]["clinical_site_deduplicated_count"] == 1
@@ -243,6 +276,45 @@ def test_actual_post_runs_scipy_returns_coordinates_baselines_and_provenance(cli
     assert len(payload["selected_locations"]) == 3
     assert all(-90 <= row["latitude"] <= 90 for row in payload["selected_locations"])
     assert all(-180 <= row["longitude"] <= 180 for row in payload["selected_locations"])
+    explanations = {
+        row["municipality_id"]: row["explanation"]
+        for row in payload["selected_locations"]
+    }
+    assert set(explanations) == {"Hudson", "Reading", "Sharon"}
+    assert set().union(
+        *(set(explanation["raw_catchment_community_ids"]) for explanation in explanations.values())
+    ) == set(payload["covered_municipality_ids"])
+    uniquely_covered_sets = [
+        set(explanation["uniquely_covered_community_ids"])
+        for explanation in explanations.values()
+    ]
+    assert all(
+        left.isdisjoint(right)
+        for index, left in enumerate(uniquely_covered_sets)
+        for right in uniquely_covered_sets[index + 1 :]
+    )
+    assert explanations["Hudson"]["raw_catchment_community_count"] == 21
+    assert explanations["Hudson"]["uniquely_covered_community_count"] == 17
+    assert explanations["Hudson"]["leave_one_out_objective_loss"] == pytest.approx(
+        254466.43992313067
+    )
+    assert explanations["Reading"]["raw_catchment_ej_subset_population_proxy"] == 1734485
+    assert explanations["Reading"]["uniquely_covered_ej_subset_population_proxy"] == 1718203
+    assert explanations["Reading"]["leave_one_out_objective_loss"] == pytest.approx(
+        1111982.0234593647
+    )
+    assert explanations["Sharon"]["raw_catchment_objective"] == pytest.approx(
+        269252.9876298667
+    )
+    assert explanations["Sharon"]["uniquely_covered_objective"] == pytest.approx(
+        264010.0919229359
+    )
+    assert all(
+        "fixed-plan removal loss" in explanation["leave_one_out_interpretation"]
+        and "not causal impact" in explanation["leave_one_out_interpretation"]
+        and "reoptimized marginal value" in explanation["leave_one_out_interpretation"]
+        for explanation in explanations.values()
+    )
     assert payload["covered_municipality_count"] == len(payload["covered_municipality_ids"])
     assert {row["strategy"] for row in payload["baselines"]} == {
         "population_first_greedy",
@@ -378,3 +450,227 @@ def test_access_summary_counts_same_final_population_and_quarantines_non_us_ma(t
     assert summary["clinical_site_unresolved_count"] == 0
     assert summary["clinical_site_deduplicated_count"] == 1
     assert summary["clinical_site_quarantined_count"] == 1
+
+
+def _site_export_metadata(record_count: int) -> dict[str, Any]:
+    return {
+        "schema_version": "trialmatch_ma_trial_sites_v1",
+        "generated_at": "2026-10-24T18:45:22Z",
+        "cohort_selection": "Deterministic synthetic test cohort",
+        "source": "Synthetic clinical export fixture",
+        "source_snapshot_study_count": record_count,
+        "expanded_study_count": record_count,
+        "expanded_studies_with_ma_recruiting_sites": record_count,
+        "source_location_count": record_count,
+        "explicit_massachusetts_location_count": record_count,
+        "excluded_non_recruiting_or_unknown_site_status_count": 0,
+        "excluded_missing_facility_name_count": 0,
+        "duplicate_record_count": 0,
+        "exported_record_count": record_count,
+        "exported_study_count": record_count,
+        "unique_facility_location_count": record_count,
+        "resolved_coordinate_count": record_count,
+        "unresolved_coordinate_count": 0,
+        "invalid_source_coordinate_count": 0,
+        "earliest_retrieved_at": "2026-10-24T17:00:00Z",
+        "latest_retrieved_at": "2026-10-24T18:00:00Z",
+        "deduplication_key": "synthetic fixture key",
+        "limitations": [
+            "coordinate_status verified means a valid source pair, not an independently verified facility entrance."
+        ],
+    }
+
+
+def test_versioned_envelope_prefers_geography_records_and_preserves_metadata(
+    tmp_path: Path,
+) -> None:
+    source_record = {
+        "nct_id": "NCT-SOURCE",
+        "conditions": ["Wrong projection"],
+        "facility_name": "Wrong projection",
+        "state": "MA",
+        "country": "US",
+    }
+    geography_record = {
+        "nct_id": "NCT-GEO",
+        "conditions": ["Cancer"],
+        "facility_source_id": "facility-1",
+        "facility_name": "Source Pair Site",
+        "city": "Boston",
+        "state": "Massachusetts",
+        "postal_code": "02108",
+        "country": "United States",
+        "latitude": 42.36,
+        "longitude": -71.06,
+        "coordinate_status": "verified",
+        "coordinate_source": "ClinicalTrials.gov API v2 geoPoint",
+        "coordinate_source_reference": "https://clinicaltrials.gov/data-api/api",
+        "overall_status": "RECRUITING",
+        "source_url": "https://clinicaltrials.gov/study/NCT-GEO",
+        "retrieved_at": "2026-10-24T17:30:00Z",
+    }
+    path = tmp_path / "versioned-sites.json"
+    path.write_text(
+        json.dumps(
+            {
+                "metadata": _site_export_metadata(1),
+                "records": [source_record],
+                "geography_records": [geography_record],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_trial_site_export(path)
+    assert loaded.report.record_collection == "geography_records"
+    assert loaded.report.input_count == loaded.report.accepted_count == 1
+    assert loaded.report.quarantined_count == 0
+    assert loaded.sites[0].nct_id == "NCT-GEO"
+    assert loaded.sites[0].resolution_status == "source_coordinates"
+    assert loaded.sites[0].coordinate_source == "ClinicalTrials.gov API v2 geoPoint"
+    assert loaded.report.metadata is not None
+    assert loaded.report.metadata.cohort_selection == "Deterministic synthetic test cohort"
+    assert "not an independently verified" in loaded.report.metadata.limitations[0]
+
+
+def test_site_features_all_sites_exact_condition_and_available_zero_semantics(
+    tmp_path: Path,
+) -> None:
+    base = {
+        "city": "Boston",
+        "state": "MA",
+        "postal_code": "02108",
+        "country": "US",
+        "overall_status": "RECRUITING",
+        "source_url": "https://example.test/study",
+        "retrieved_at": "2026-10-24T17:30:00Z",
+    }
+    records = [
+        {
+            **base,
+            "nct_id": "NCT1",
+            "conditions": ["Cancer"],
+            "facility_name": "Resolved Cancer Site",
+            "latitude": 42.321809755146745,
+            "longitude": -71.09124969447807,
+            "coordinate_status": "verified",
+            "coordinate_source": "ClinicalTrials.gov API v2 geoPoint",
+            "coordinate_source_reference": "https://clinicaltrials.gov/data-api/api",
+        },
+        {
+            **base,
+            "nct_id": "NCT2",
+            "conditions": ["  Cancer  "],
+            "facility_name": "Unresolved Cancer Site",
+            "coordinate_status": "unresolved",
+        },
+        {
+            **base,
+            "nct_id": "NCT3",
+            "conditions": ["Lung Cancer"],
+            "facility_name": "Different Exact Condition",
+            "latitude": 42.4,
+            "longitude": -71.1,
+            "coordinate_status": "verified",
+            "coordinate_source": "ClinicalTrials.gov API v2 geoPoint",
+            "coordinate_source_reference": "https://clinicaltrials.gov/data-api/api",
+        },
+    ]
+    path = tmp_path / "sites.json"
+    path.write_text(json.dumps({"geography_records": records}), encoding="utf-8")
+    client = client_for(GeographyRuntime(site_export_path=path))
+
+    unfiltered = client.get("/api/geo", params={"municipality": "Boston"}).json()
+    assert len(unfiltered["recruiting_site_features"]) == 3
+    assert unfiltered["available_conditions"] == ["Cancer", "Lung Cancer"]
+
+    exact = client.get(
+        "/api/geo",
+        params={"municipality": "Boston", "condition": "ＣＡＮＣＥＲ", "access_radius_km": 5},
+    ).json()
+    assert [feature["properties"]["nct_id"] for feature in exact["recruiting_site_features"]] == [
+        "NCT1",
+        "NCT2",
+    ]
+    assert exact["recruiting_site_features"][1]["geometry"] is None
+    assert exact["summary"]["clinical_site_resolved_count"] == 1
+    assert exact["summary"]["clinical_site_unresolved_count"] == 1
+    assert exact["summary"]["clinical_site_distinct_nct_count"] == 2
+
+    no_match = client.get(
+        "/api/geo",
+        params={"municipality": "Boston", "condition": "Cancer synonym", "access_radius_km": 5},
+    ).json()
+    assert no_match["recruiting_site_features"] == []
+    properties = no_match["features"][0]["properties"]
+    assert properties["nearest_resolved_recruiting_site_distance_km"] is None
+    assert properties["distinct_nearby_recruiting_nct_count"] == 0
+    assert properties["access_radius_km"] == 5
+
+
+@pytest.mark.skipif(
+    not Path("/tmp/trialmatch-ma-trial-sites.json").is_file(),
+    reason="temporary real clinical export is unavailable",
+)
+def test_real_export_loader_and_condition_geo_integration() -> None:
+    path = Path("/tmp/trialmatch-ma-trial-sites.json")
+    loaded = load_trial_site_export(path)
+    adapted = adapt_trial_sites(loaded.sites)
+    retained_ncts = {site.nct_id for site in adapted.sites}
+    resolved = [site for site in adapted.sites if site.resolution_status == "source_coordinates"]
+    conditions = sorted(
+        {" ".join(value.split()) for site in adapted.sites for value in site.conditions},
+        key=lambda value: (value.casefold(), value),
+    )
+
+    assert loaded.report.record_collection == "geography_records"
+    assert loaded.report.input_count == 149
+    assert loaded.report.accepted_count == 149
+    assert loaded.report.quarantined_count == 0
+    assert adapted.report.input_count == 149
+    assert adapted.report.massachusetts_count == 149
+    assert adapted.report.non_recruiting_or_unknown_count == 0
+    assert adapted.report.deduplicated_count == 149
+    assert adapted.report.duplicate_count == 0
+    assert adapted.report.resolved_count == 149
+    assert adapted.report.unresolved_count == 0
+    assert len(retained_ncts) == 86
+    assert len(resolved) == 149
+    assert all(site.resolution_status != "unresolved" for site in adapted.sites)
+    assert loaded.report.metadata is not None
+    assert loaded.report.metadata.unique_facility_location_count == 72
+    assert loaded.report.metadata.exported_record_count == len(loaded.sites)
+
+    sample_condition = conditions[0]
+    response = client_for(GeographyRuntime(site_export_path=path)).get(
+        "/api/geo", params={"condition": sample_condition, "access_radius_km": 0}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    site_features = payload["recruiting_site_features"]
+    assert site_features
+    assert all(
+        any(
+            " ".join(condition.casefold().split())
+            == " ".join(sample_condition.casefold().split())
+            for condition in feature["properties"]["conditions"]
+        )
+        for feature in site_features
+    )
+    summary = payload["summary"]
+    assert summary["clinical_site_source_record_count"] == 149
+    assert summary["clinical_site_schema_accepted_count"] == 149
+    assert summary["clinical_site_massachusetts_recruiting_retained_count"] == 149
+    assert summary["clinical_site_retained_count"] == len(site_features)
+    assert summary["clinical_site_distinct_nct_count"] == len(
+        {feature["properties"]["nct_id"] for feature in site_features}
+    )
+    assert summary["clinical_site_resolved_count"] == len(site_features)
+    assert summary["clinical_site_unresolved_count"] == 0
+    assert summary["clinical_site_duplicate_removed_count"] == 0
+    assert summary["clinical_site_quarantined_count"] == 0
+    assert summary["clinical_site_unique_facility_location_count"] == 72
+    access_properties = [feature["properties"] for feature in payload["features"]]
+    assert all(value["access_radius_km"] == 0 for value in access_properties)
+    assert all(value["nearest_resolved_recruiting_site_distance_km"] is not None for value in access_properties)
+    assert any(value["distinct_nearby_recruiting_nct_count"] == 0 for value in access_properties)
