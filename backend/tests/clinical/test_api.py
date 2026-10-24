@@ -32,6 +32,8 @@ def test_trial_search_contract(study_factory, tmp_path):
     body = response.json()
     assert body["items"][0]["nct_id"] == study.nct_id
     assert body["items"][0]["source_description"] == study.source_description
+    assert body["items"][0]["brief_summary"] == study.brief_summary
+    assert body["items"][0]["detailed_description"] == study.detailed_description
     assert body["items"][0]["plain_language_summary"] is None
     assert body["pagination"] == {"page": 1, "page_size": 10, "total_items": 1, "total_pages": 1}
     assert body["data_freshness"]["source"] == "ClinicalTrials.gov"
@@ -140,6 +142,8 @@ def test_trial_detail_uses_expanded_local_record(source_record_factory, tmp_path
     assert body["source_description"] == (
         "This official source text describes the synthetic study purpose."
     )
+    assert body["brief_summary"] == body["source_description"]
+    assert body["detailed_description"] is None
     assert body["plain_language_summary"] is None
     assert len(body["locations"]) == 2
     assert body["locations"][0]["facility"] == "Synthetic Facility"

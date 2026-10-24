@@ -83,10 +83,8 @@ def normalize_study(
     protocol = record.get("protocolSection", {})
     resolved_detail_status = detail_status or (
         DetailRetrievalStatus.RETRIEVED
-        if any(
-            key in protocol
-            for key in ("eligibilityModule", "contactsLocationsModule", "descriptionModule")
-        )
+        if "contactsLocationsModule" in protocol
+        and ("eligibilityModule" in protocol or "descriptionModule" in protocol)
         else DetailRetrievalStatus.NOT_RETRIEVED
     )
     return Study(
@@ -98,6 +96,10 @@ def normalize_study(
         source_description=_source_description(
             source.protocol.description.brief_summary,
             source.protocol.description.detailed_description,
+        ),
+        brief_summary=_clean_description(source.protocol.description.brief_summary),
+        detailed_description=_clean_description(
+            source.protocol.description.detailed_description
         ),
         eligibility_criteria=eligibility.eligibility_criteria,
         minimum_age=eligibility.minimum_age,
@@ -120,6 +122,7 @@ def source_missing_values(study: Study) -> dict[str, int]:
     return {
         "Condition": int(not study.conditions),
         "Phase": int(not study.phases),
+        "Description": int(not study.source_description),
         "EligibilityCriteria": int(not study.eligibility_criteria),
         "MinimumAge": int(not study.minimum_age),
         "MaximumAge": int(not study.maximum_age),
@@ -212,10 +215,11 @@ def normalize_phase(value: str) -> str:
 
 
 def _source_description(brief: str | None, detailed: str | None) -> str | None:
-    for value in (brief, detailed):
-        if value and value.strip():
-            return value.strip()
-    return None
+    return _clean_description(brief) or _clean_description(detailed)
+
+
+def _clean_description(value: str | None) -> str | None:
+    return value.strip() if value and value.strip() else None
 
 
 def _age_to_years(value: str | None) -> float | None:

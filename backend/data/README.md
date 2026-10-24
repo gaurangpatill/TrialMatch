@@ -14,6 +14,6 @@ Ignored runtime artifacts:
 - `cache/`: retrievable API and structured LLM caches.
 - `trialmatch.sqlite3` and SQLite WAL/SHM files: normalized clinical runtime data.
 
-A fresh deployment does **not** contain the clinical SQLite database. Attach a persistent Railway volume and run the finite ClinicalTrials.gov ingestion command in [`../../docs/deployment.md`](../../docs/deployment.md) before release acceptance. Require a complete pagination report and nonzero search result; `/api/health` alone is not data readiness. Live-source re-ingestion is reproducible logic but not byte-identical restoration because no checksum-pinned clinical source snapshot is committed.
+A fresh deployment does **not** contain the clinical SQLite database. Attach a persistent Render disk at `/var/data` and run the finite ClinicalTrials.gov ingestion command in [`../../docs/deployment.md`](../../docs/deployment.md) before release acceptance. Require a complete pagination report and nonzero search result; `/api/health` alone is not data readiness. Live-source re-ingestion is reproducible logic but not byte-identical restoration because no checksum-pinned clinical source snapshot is committed.
 
 Never commit databases, raw caches, secrets, or patient data. Every real acquisition must update provenance from observed results, not challenge estimates. See [`../../docs/data-provenance.md`](../../docs/data-provenance.md).

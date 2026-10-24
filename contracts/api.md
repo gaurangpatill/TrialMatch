@@ -89,6 +89,8 @@ Query parameters:
       "conditions": ["Example condition"],
       "phases": ["PHASE2"],
       "source_description": "Official study-purpose text from ClinicalTrials.gov.",
+      "brief_summary": "Official study-purpose text from ClinicalTrials.gov.",
+      "detailed_description": "Longer official technical description when provided.",
       "plain_language_summary": null,
       "minimum_age": "18 Years",
       "maximum_age": null,
@@ -113,7 +115,7 @@ Query parameters:
 }
 ```
 
-`total_items` is an observed accepted count for the applied local query, never the approximate challenge count. `source_description` is nullable official purpose text (brief summary preferred, then detailed description). `plain_language_summary` is nullable and is served only from a validated cache for the current source hash; search and detail reads never invoke an LLM. Cached summaries are explanatory text, not eligibility evidence, and the official source text/link remains authoritative.
+`total_items` is an observed accepted count for the applied local query, never the approximate challenge count. `brief_summary` and `detailed_description` preserve the separate nullable official ClinicalTrials.gov fields. `source_description` is the concise official display fallback (brief summary preferred, then detailed description). `plain_language_summary` is nullable and is served only from a validated cache for the current source hash; search and detail reads never invoke an LLM. Cached summaries are explanatory text, not eligibility evidence, and the official source text/link remains authoritative.
 
 `GET /api/trials/{nct_id}` returns the same summary fields plus eligibility text, contacts, retrieval provenance, and extraction coverage. It may retrieve one official detail record when expansion is missing or explicitly refreshed; it does not trigger paid model calls. Facility arrays preserve all source locations. Consumers must identify Massachusetts facilities from the explicit state field and must not label the worldwide array as Massachusetts-only.
 

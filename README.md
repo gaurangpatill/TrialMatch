@@ -6,11 +6,11 @@ TrialMatch is a Hackachusetts 2026 Healthcare & Biotech (H5) research-access pro
 
 ## Product surfaces
 
-- **Patient Portal:** Search recruiting Massachusetts studies, compare synthetic profile facts with protocol criteria, expose unresolved questions, and link every conclusion to source text.
+- **Participant Portal:** Search recruiting Massachusetts studies, review source-backed descriptions, and compare fictional example facts with published protocol requirements while preserving unresolved questions and evidence links.
 - **Researcher Dashboard:** Explore Massachusetts trial-site distribution and aggregate Environmental Justice indicators.
 - **Recruitment Optimizer:** Select modeled outreach locations under explicit resource constraints. Outputs estimate modeled coverage, not observed enrollment outcomes.
 
-The integrated application includes the clinical discovery/screening API, persisted Massachusetts geography, a condition-independent SciPy MILP outreach optimizer, the Patient Portal, and the researcher dashboard. Deployment still requires a populated persistent clinical SQLite volume; process health alone does not establish data readiness.
+The integrated application includes the clinical discovery/screening API, persisted Massachusetts geography, a condition-independent SciPy MILP outreach optimizer, the Participant Portal, and the Researcher Workspace. Deployment still requires a populated persistent clinical SQLite volume; process health alone does not establish data readiness.
 
 ## Architecture
 
@@ -81,10 +81,10 @@ Environment variables are documented in `.env.example`. Copy it to `.env` or the
 
 ## Deployment and release
 
-- [Railway FastAPI and Vercel Next.js deployment](docs/deployment.md)
+- [Render FastAPI and Vercel Next.js deployment](docs/deployment.md)
 - [End-to-end demo/release checklist](docs/release-checklist.md)
 
-Railway must use one process and a persistent `/data` volume. The ignored clinical SQLite database is populated by an explicit one-off ingestion command; it is never generated during application startup or committed. Vercel uses same-origin proxying for clinical, geography, and optimizer requests. CI runs the complete backend suite plus frontend tests, typecheck, and production build from clean dependency installs.
+Render must use one instance and a persistent `/var/data` disk. The ignored clinical SQLite database is populated by an explicit one-off ingestion command; it is never generated during application startup or committed. Vercel uses same-origin proxying for clinical, geography, and optimizer requests. CI runs the complete backend suite plus frontend tests, typecheck, and production build from clean dependency installs.
 
 ## Validation
 

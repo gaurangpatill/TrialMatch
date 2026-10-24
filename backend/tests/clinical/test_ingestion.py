@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import httpx
 import pytest
@@ -27,7 +28,7 @@ async def test_paginates_and_deduplicates_nct_ids(source_record_factory, tmp_pat
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert {"MinimumAge", "MaximumAge", "Sex"} <= set(
+        assert {"MinimumAge", "MaximumAge", "Sex", "BriefSummary", "DetailedDescription"} <= set(
             request.url.params["fields"].split(",")
         )
         return httpx.Response(200, json=pages.get(request.url.params.get("pageToken")), request=request)
@@ -114,7 +115,7 @@ async def test_detail_is_cached_atomically(source_record_factory, tmp_path):
 
 
 def test_normalization_preserves_source_fields_and_evidence(source_record_factory):
-    record = source_record_factory()
+    record = source_record_factory(detailed_description="Full official technical description.")
     record["protocolSection"]["identificationModule"]["officialTitle"] = (
         "Full Official Synthetic Study Title"
     )
@@ -122,6 +123,8 @@ def test_normalization_preserves_source_fields_and_evidence(source_record_factor
     assert study.nct_id == "NCT00000001"
     assert study.title == "Full Official Synthetic Study Title"
     assert study.source_description == "This official source text describes the synthetic study purpose."
+    assert study.brief_summary == "This official source text describes the synthetic study purpose."
+    assert study.detailed_description == "Full official technical description."
     assert study.eligibility_criteria == "Participants must be 18 years or older."
     assert study.locations[0].facility == "Synthetic Facility"
     assert study.locations[0].recruiting_status == "RECRUITING"
@@ -215,3 +218,27 @@ def test_list_snapshot_does_not_overwrite_expanded_detail_or_criteria(
     assert repository.get_criteria(
         detailed.nct_id, source_hash=preserved.source_hash
     )
+
+
+def test_repository_repairs_missing_description_columns_from_preserved_source(
+    source_record_factory, tmp_path
+):
+    path = tmp_path / "clinical.sqlite3"
+    repository = ClinicalRepository(path)
+    study = normalize_study(
+        source_record_factory(detailed_description="Full official technical description.")
+    )
+    repository.upsert_studies([study])
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE studies SET source_description = NULL, brief_summary = NULL, detailed_description = NULL"
+        )
+        connection.commit()
+
+    repository.initialize()
+    repaired = repository.get_study(study.nct_id)
+
+    assert repaired is not None
+    assert repaired.source_description == study.brief_summary
+    assert repaired.brief_summary == study.brief_summary
+    assert repaired.detailed_description == "Full official technical description."

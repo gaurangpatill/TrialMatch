@@ -2,6 +2,7 @@
 
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 
+import {SiteHeader} from "../site-header";
 import ResearcherMap from "./researcher-map";
 import styles from "./researcher.module.css";
 import type {BaselineResult, ConstraintSatisfaction, GeoCollection, GeoFeature, OptimizeResponse, SelectedLocation} from "./types";
@@ -241,10 +242,7 @@ export default function ResearcherDashboard() {
   const activeSelection = mapPlan?.result.selected_locations.find((location) => location.municipality_id === activeFeature?.id);
 
   return <div className={styles.shell}>
-    <header className={styles.header}>
-      <div className={styles.brand}><div className={styles.mark} aria-hidden="true">T+</div><div><strong>TrialMatch</strong><span>Researcher Workspace</span></div></div>
-      <div className={styles.headerMeta}><span><i className={styles.statusDot} />Source-backed planning tools</span><span>Separate from Participant Portal</span></div>
-    </header>
+    <SiteHeader active="researcher" />
 
     <main className={styles.main}>
       <section className={styles.intro} aria-labelledby="workspace-title">

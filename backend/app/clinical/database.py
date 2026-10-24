@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS studies (
     conditions_json TEXT NOT NULL,
     phases_json TEXT NOT NULL,
     source_description TEXT,
+    brief_summary TEXT,
+    detailed_description TEXT,
     eligibility_criteria TEXT,
     minimum_age TEXT,
     maximum_age TEXT,
@@ -134,23 +136,41 @@ class ClinicalRepository:
             study_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(studies)")
             }
-            if "source_description" not in study_columns:
-                connection.execute("ALTER TABLE studies ADD COLUMN source_description TEXT")
-                for row in connection.execute("SELECT nct_id, raw_json FROM studies"):
-                    try:
-                        description = json.loads(row["raw_json"]).get("protocolSection", {}).get(
-                            "descriptionModule", {}
-                        )
-                        value = description.get("briefSummary") or description.get(
-                            "detailedDescription"
-                        )
-                        cleaned = value.strip() if isinstance(value, str) and value.strip() else None
-                    except (json.JSONDecodeError, AttributeError):
-                        cleaned = None
-                    connection.execute(
-                        "UPDATE studies SET source_description = ? WHERE nct_id = ?",
-                        (cleaned, row["nct_id"]),
+            for column in ("source_description", "brief_summary", "detailed_description"):
+                if column not in study_columns:
+                    connection.execute(f"ALTER TABLE studies ADD COLUMN {column} TEXT")
+            # Derived description columns can be repaired losslessly from the preserved
+            # official source JSON. Run this on every startup so databases created by
+            # older releases do not remain permanently blank merely because the column
+            # itself already existed.
+            for row in connection.execute(
+                """
+                SELECT nct_id, raw_json, source_description,
+                       brief_summary, detailed_description
+                FROM studies
+                WHERE source_description IS NULL
+                   OR brief_summary IS NULL
+                   OR detailed_description IS NULL
+                """
+            ):
+                try:
+                    description = json.loads(row["raw_json"]).get("protocolSection", {}).get(
+                        "descriptionModule", {}
                     )
+                    brief = _clean_source_text(description.get("briefSummary"))
+                    detailed = _clean_source_text(description.get("detailedDescription"))
+                except (json.JSONDecodeError, AttributeError):
+                    brief = None
+                    detailed = None
+                source_description = _clean_source_text(row["source_description"]) or brief or detailed
+                connection.execute(
+                    """
+                    UPDATE studies
+                    SET source_description = ?, brief_summary = ?, detailed_description = ?
+                    WHERE nct_id = ?
+                    """,
+                    (source_description, brief, detailed, row["nct_id"]),
+                )
             if "detail_status" not in study_columns:
                 connection.execute(
                     "ALTER TABLE studies ADD COLUMN detail_status TEXT NOT NULL DEFAULT 'not_retrieved'"
@@ -166,8 +186,8 @@ class ClinicalRepository:
                 UPDATE studies
                 SET detail_status = 'retrieved', detail_attempted_at = retrieved_at
                 WHERE detail_status = 'not_retrieved'
+                  AND raw_json LIKE '%\"contactsLocationsModule\"%'
                   AND (raw_json LIKE '%\"eligibilityModule\"%'
-                       OR raw_json LIKE '%\"contactsLocationsModule\"%'
                        OR raw_json LIKE '%\"descriptionModule\"%')
                 """
             )
@@ -209,6 +229,8 @@ class ClinicalRepository:
                 json.dumps(study.conditions),
                 json.dumps(study.phases),
                 study.source_description,
+                study.brief_summary,
+                study.detailed_description,
                 study.eligibility_criteria,
                 study.minimum_age,
                 study.maximum_age,
@@ -234,11 +256,12 @@ class ClinicalRepository:
             """
             INSERT INTO studies (
                 nct_id, title, overall_status, conditions_json, phases_json,
-                source_description, eligibility_criteria, minimum_age, maximum_age, sex,
+                source_description, brief_summary, detailed_description,
+                eligibility_criteria, minimum_age, maximum_age, sex,
                 locations_json, contacts_json, source_url, retrieved_at,
                 source_hash, raw_json, detail_status, detail_attempted_at,
                 detail_error_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(nct_id) DO UPDATE SET
                 title=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
@@ -255,6 +278,12 @@ class ClinicalRepository:
                 source_description=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
                            THEN studies.source_description ELSE excluded.source_description END,
+                brief_summary=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.brief_summary ELSE excluded.brief_summary END,
+                detailed_description=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.detailed_description ELSE excluded.detailed_description END,
                 eligibility_criteria=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
                            THEN studies.eligibility_criteria ELSE excluded.eligibility_criteria END,
@@ -864,6 +893,8 @@ class ClinicalRepository:
                 "conditions": json.loads(row["conditions_json"]),
                 "phases": json.loads(row["phases_json"]),
                 "source_description": row["source_description"],
+                "brief_summary": row["brief_summary"],
+                "detailed_description": row["detailed_description"],
                 "eligibility_criteria": row["eligibility_criteria"],
                 "minimum_age": row["minimum_age"],
                 "maximum_age": row["maximum_age"],
@@ -909,3 +940,9 @@ def _age_to_years(value: str | None) -> float | None:
     if unit.startswith("week"):
         return number / 52.1429
     return number / 365.2425
+
+
+def _clean_source_text(value: object) -> str | None:
+    """Return nonblank official text without inventing a replacement."""
+
+    return value.strip() if isinstance(value, str) and value.strip() else None

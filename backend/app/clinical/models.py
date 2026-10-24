@@ -169,6 +169,8 @@ class Study(StrictModel):
     conditions: list[str] = Field(default_factory=list)
     phases: list[str] = Field(default_factory=list)
     source_description: str | None = None
+    brief_summary: str | None = None
+    detailed_description: str | None = None
     eligibility_criteria: str | None = None
     minimum_age: str | None = None
     maximum_age: str | None = None
@@ -578,6 +580,8 @@ class StudySummary(StrictModel):
     conditions: list[str]
     phases: list[str]
     source_description: str | None
+    brief_summary: str | None
+    detailed_description: str | None
     plain_language_summary: str | None
     minimum_age: str | None
     maximum_age: str | None
@@ -636,6 +640,8 @@ class StudyDetailResponse(StrictModel):
     conditions: list[str]
     phases: list[str]
     source_description: str | None
+    brief_summary: str | None
+    detailed_description: str | None
     plain_language_summary: str | None
     eligibility_criteria: str | None
     minimum_age: str | None

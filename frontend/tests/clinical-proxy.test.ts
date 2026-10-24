@@ -171,6 +171,8 @@ describe("clinical API proxies", () => {
       conditions: ["Example condition"],
       phases: ["NOT_APPLICABLE"],
       source_description: "Official source purpose text.",
+      brief_summary: "Official source purpose text.",
+      detailed_description: "Full official technical description.",
       plain_language_summary: "Cached source-grounded plain-English summary.",
       minimum_age: "18 Years",
       maximum_age: null,

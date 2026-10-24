@@ -69,6 +69,8 @@ def search_trials(
                 conditions=study.conditions,
                 phases=study.phases,
                 source_description=study.source_description,
+                brief_summary=study.brief_summary,
+                detailed_description=study.detailed_description,
                 plain_language_summary=repository.get_current_summary(
                     study.nct_id, study.source_hash
                 ),
@@ -141,6 +143,8 @@ async def get_trial_detail(
         conditions=study.conditions,
         phases=study.phases,
         source_description=study.source_description,
+        brief_summary=study.brief_summary,
+        detailed_description=study.detailed_description,
         plain_language_summary=repository.get_current_summary(study.nct_id, study.source_hash),
         eligibility_criteria=study.eligibility_criteria,
         minimum_age=study.minimum_age,

@@ -11,9 +11,9 @@ Record real results and URLs when this checklist is executed; unchecked items ar
 - [ ] MassGIS and clinical-site counts match `backend/data/manifest.json` and committed export metadata.
 - [ ] G10 handoff records exact tests, source scope, API behavior, and remaining limitations.
 
-## Railway backend
+## Render backend
 
-- [ ] One replica uses Python 3.11 and a persistent `/data` volume.
+- [ ] One `0.5c-512mb` or larger instance uses Python 3.11.14 and a persistent `/var/data` disk.
 - [ ] `LLM_PROVIDER=disabled` unless a specifically approved bounded server-side run is planned.
 - [ ] `GET /api/health` returns the exact process-liveness contract.
 - [ ] `GET /api/trials?page_size=1` returns at least one source-grounded record after provisioning.
@@ -24,8 +24,8 @@ Record real results and URLs when this checklist is executed; unchecked items ar
 ## Vercel frontend
 
 - [ ] Root directory is `frontend`; locked install, tests, typecheck, and build pass.
-- [ ] Only server-side `TRIALMATCH_API_BASE_URL` points to Railway; browser-visible API URL is unset in production.
-- [ ] Patient journey works through Vercel: search, filters/paging, detail, selection, synthetic screening, evidence links, loading/error states.
+- [ ] Only server-side `TRIALMATCH_API_BASE_URL` points to Render; browser-visible API URL is unset in production.
+- [ ] Participant journey works through Vercel: search, filters/paging, descriptions, detail, selection, fictional-example requirement checks, evidence links, loading/error states.
 - [ ] Researcher journey works through Vercel: condition access view, map, optimizer controls, results, baseline, caveats.
 - [ ] Keyboard/focus, responsive layouts, contrast/status meaning, and loading/error announcements receive a manual accessibility check.
 

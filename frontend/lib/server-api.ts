@@ -64,14 +64,18 @@ export function isStudyDetailResponse(value: unknown): boolean {
     "retrieved_at", "detail_status", "detail_attempted_at", "retrieval_source",
     "retrieval_message", "screening_coverage",
   ] as const;
-  const summaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
-  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, summaryKeys)) return false;
+  const legacySummaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
+  const summaryKeys = [...baseKeys, "source_description", "brief_summary", "detailed_description", "plain_language_summary"] as const;
+  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, legacySummaryKeys) && !hasExactKeys(value, summaryKeys)) return false;
   return (
     [value.nct_id, value.title, value.overall_status, value.source_url, value.retrieved_at,
       value.retrieval_message].every((item) => typeof item === "string") &&
     isStringArray(value.conditions) && isStringArray(value.phases) &&
     [value.eligibility_criteria, value.minimum_age, value.maximum_age, value.sex,
-      value.detail_attempted_at, (value as Record<string, unknown>).source_description, (value as Record<string, unknown>).plain_language_summary].every(
+      value.detail_attempted_at, (value as Record<string, unknown>).source_description,
+      (value as Record<string, unknown>).brief_summary,
+      (value as Record<string, unknown>).detailed_description,
+      (value as Record<string, unknown>).plain_language_summary].every(
         (item) => typeof item === "string" || item === null || item === undefined,
       ) &&
     Array.isArray(value.locations) && value.locations.every(isTrialLocation) &&
@@ -99,8 +103,9 @@ function isTrialSummary(value: unknown): boolean {
     "maximum_age", "sex", "locations", "source_url", "retrieved_at", "detail_status",
     "screening_coverage_status",
   ] as const;
-  const summaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
-  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, summaryKeys)) return false;
+  const legacySummaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
+  const summaryKeys = [...baseKeys, "source_description", "brief_summary", "detailed_description", "plain_language_summary"] as const;
+  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, legacySummaryKeys) && !hasExactKeys(value, summaryKeys)) return false;
   return (
     [value.nct_id, value.title, value.overall_status, value.source_url, value.retrieved_at].every(
       (item) => typeof item === "string",
@@ -109,6 +114,8 @@ function isTrialSummary(value: unknown): boolean {
     isStringArray(value.phases) &&
     [value.minimum_age, value.maximum_age, value.sex,
       (value as Record<string, unknown>).source_description,
+      (value as Record<string, unknown>).brief_summary,
+      (value as Record<string, unknown>).detailed_description,
       (value as Record<string, unknown>).plain_language_summary].every(
       (item) => typeof item === "string" || item === null || item === undefined,
     ) &&

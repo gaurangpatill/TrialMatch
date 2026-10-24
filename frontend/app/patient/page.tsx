@@ -3,8 +3,8 @@ import type {Metadata} from "next";
 import {PatientPortal} from "./patient-portal";
 
 export const metadata: Metadata = {
-  title: "Patient Portal · TrialMatch",
-  description: "Search recruiting Massachusetts studies and screen a synthetic profile.",
+  title: "Participant Portal · TrialMatch",
+  description: "Explore recruiting Massachusetts studies and compare fictional example information with published requirements.",
 };
 
 export default function PatientPage() {
