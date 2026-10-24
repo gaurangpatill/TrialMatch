@@ -55,10 +55,11 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - _Verified 2026-10-24 in the same exact Python 3.11.10 run: actual TestClient `POST /api/optimize` for 3 events, 25 km, lambda 0.6 returned HTTP 200/optimal, native status 0, gap 0.0, selected Hudson/Reading/Sharon, covered 87 municipalities and EJ-subset population proxy 2,636,354 with objective 1,639,905.9010591828. Zero events returned an optimal empty plan. Parameter-change tests proved each request invoked the solver and produced mathematically different results; condition-specific requests returned structured 409 responses rather than implying an unsupported objective._
   - _Requirements: R4, R5_
 
-- [ ] **G9. Build researcher dashboard integration**
+- [x] **G9. Build researcher dashboard integration**
   - Use MapLibre with accessible source/derived layers, legends, no-data state, freshness, and limitations.
   - Integrate optimization inputs/results without implying enrollment prediction.
   - Run frontend typecheck/build and critical interaction verification.
+  - _Verified 2026-10-24 with Node 22.14.0: `npm run typecheck` passed and Next.js 16.4.3 `npm run build` compiled `/researcher` successfully. A production server smoke request returned the researcher route with its controls. The route loads real `/api/geo` data and each Run action sends current event/radius/equity controls to `/api/optimize`; backend tests verify each changed request invokes a fresh solver run. Clinical conditions remain disabled while the genuine site export is unavailable._
   - _Requirements: R3, R5_
 
 - [ ] **G10. Workstream verification and handoff**
