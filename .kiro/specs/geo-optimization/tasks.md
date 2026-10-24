@@ -32,16 +32,18 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - Add success, filter, missing-geometry, validation, and source-summary API tests.
   - _Requirements: R2, R3, R5_
 
-- [ ] **G6. Implement MILP input and formulation**
+- [x] **G6. Implement MILP input and formulation**
   - Validate candidates, units, finite costs/weights, budget, limits, and supported constraints.
   - Build deterministic variable mappings, objective vector, bounds, integrality, and constraint matrix.
   - Test manually solvable, infeasible, boundary, unknown-ID, and malformed inputs.
+  - _Verified 2026-10-24 with temporary Python 3.11.10 and pinned SciPy 1.15.2: `PYTHONPATH=/tmp/trialmatch-geotest311:. /tmp/trialmatch-python/python/bin/python3 -m pytest backend/tests/optimizer -q` passed 53 tests; `PYTHONPATH=/tmp/trialmatch-geotest311:. /tmp/trialmatch-python/python/bin/python3 -m compileall -q backend/app/optimizer backend/tests/optimizer` passed. Equity priority uses tested min-max normalization of one documented EJ-subset indicator, preserves missing values, and maps constant observed values to neutral 0.5._
   - _Requirements: R4_
 
-- [ ] **G7. Implement solver interpretation and baseline**
+- [x] **G7. Implement solver interpretation and baseline**
   - Invoke SciPy MILP and map all termination states honestly.
   - Compute selected resources/objective from validated inputs and implement deterministic constrained baseline.
   - Add property-based budget/count invariants, tie behavior, determinism, and baseline comparison tests.
+  - _Verified genuine `scipy.optimize.milp` status 0 optimum against exhaustive enumeration: objective 7.0, exhaustive 7.0, selected `('B',)`; no real coordinates are integrated and every test coordinate is labeled `synthetic_test_fixture`._
   - _Requirements: R4, R5_
 
 - [ ] **G8. Implement `POST /api/optimize`**
