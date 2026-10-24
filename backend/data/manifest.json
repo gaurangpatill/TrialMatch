@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0",
   "project": "TrialMatch",
-  "last_updated_utc": null,
+  "last_updated_utc": "2026-10-24T18:45:18.786215+00:00",
   "sources": [
     {
       "id": "clinicaltrials-gov-ma-recruiting",
@@ -44,15 +44,34 @@
         "retrieved_at"
       ],
       "acquisition": {
-        "status": "not_acquired",
-        "acquired_at_utc": null,
-        "observed_record_count": null,
-        "accepted_record_count": null,
-        "duplicate_identifier_count": null,
-        "missing_value_counts": null,
-        "schema_valid": null,
+        "status": "complete",
+        "acquired_at_utc": "2026-10-24T18:45:18.786215+00:00",
+        "observed_record_count": 3145,
+        "accepted_record_count": 3145,
+        "duplicate_identifier_count": 0,
+        "missing_value_counts": {
+          "Condition": 0,
+          "Contacts": 3045,
+          "EligibilityCriteria": 3045,
+          "Locations": 3045,
+          "MaximumAge": 3131,
+          "MinimumAge": 3057,
+          "Phase": 527,
+          "Sex": 3045
+        },
+        "schema_valid": true,
         "raw_sha256": null,
-        "filters_or_exclusions": []
+        "effective_query_url": "https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&filter.overallStatus=RECRUITING&pageSize=1000&fields=NCTId%2CBriefTitle%2COverallStatus%2CCondition%2CPhase&format=json",
+        "effective_page_size": 1000,
+        "page_count": 4,
+        "pagination_completed": true,
+        "filters_or_exclusions": [
+          "query.locn=Massachusetts",
+          "filter.overallStatus=RECRUITING",
+          "excluded_source_records=0",
+          "expanded_detail_records=100",
+          "detail_selection=title_or_condition_contains:cancer;stable_order=nct_id"
+        ]
       }
     },
     {

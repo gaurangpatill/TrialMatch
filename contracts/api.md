@@ -129,6 +129,12 @@ Clinical Intelligence ownership. Evaluates a synthetic profile against cached st
     "conditions": ["example condition"],
     "medications": [],
     "procedures": [],
+    "absent_conditions": [],
+    "absent_medications": [],
+    "absent_procedures": [],
+    "condition_days_ago": {},
+    "medication_days_ago": {},
+    "procedure_days_ago": {},
     "laboratory_values": {},
     "attributes": {}
   },
@@ -141,8 +147,11 @@ Request rules:
 
 - `synthetic` must equal `true`; otherwise reject with `400`.
 - `age_years` is decimal or null, range `0..125`.
-- Clinical fact lists contain explicitly asserted facts only; absence is not negation.
-- `trial_ids` is optional, unique, maximum 100. If omitted, documented search candidates are used.
+- Clinical fact lists contain explicitly asserted facts only; absence from a positive list is not negation.
+- `absent_conditions`, `absent_medications`, and `absent_procedures` contain only facts explicitly known to be absent; a fact present in both positive and absent lists is rejected.
+- The three `*_days_ago` maps contain finite non-negative elapsed-day values for explicitly present facts and support bounded temporal predicates.
+- `laboratory_values` contains bare numeric values under this contract. Unit-sensitive laboratory criteria therefore remain `unknown` until a coordinated unit-bearing fact schema is introduced.
+- `trial_ids` is optional, unique, maximum 100. Unknown requested IDs return `404`. If omitted, documented search candidates are used.
 - `limit` defaults to 20 and is `1..100`.
 - Unsupported extra clinical attributes may be preserved under `attributes` but evaluate as `unknown` unless explicitly supported.
 
@@ -155,7 +164,18 @@ Request rules:
     {
       "nct_id": "NCT01234567",
       "title": "Example Study",
-      "screening_status": "potential_match",
+      "screening_status": "unresolved",
+      "extraction_coverage": {
+        "status": "partial",
+        "protocol_item_count": 8,
+        "accounted_item_count": 6,
+        "evaluable_criterion_count": 4,
+        "unsupported_protocol_requirement_count": 2,
+        "uncovered_protocol_requirement_count": 2,
+        "independently_verified": false,
+        "verification_method": null,
+        "reason": "Eligibility extraction is partial: 2 explicitly enumerated protocol requirements remain unprocessed."
+      },
       "criteria": [
         {
           "criterion_id": "NCT01234567-inc-001",
@@ -192,8 +212,11 @@ Enums:
 - `criterion.status`: `met | not_met | unknown`
 - `criterion.classification`: `inclusion | exclusion`
 - `screening_status`: `potential_match | known_mismatch | unresolved`
+- `extraction_coverage.status`: `not_attempted | partial | complete | failed | stale`
 
-A result is `known_mismatch` when a known fact fails an inclusion or satisfies an exclusion. Missing facts never produce `met`. Overall aggregation rules must be deterministic and documented in the Clinical Intelligence design.
+`extraction_coverage` is independent of criterion outcomes. It records explicit protocol-item accounting for the current source version; criterion count and provider-declared completeness alone never establish completeness. `potential_match` is allowed only when current-source coverage is declared complete **and separately approved through a persisted independent verification method**, at least one criterion is deterministically evaluable, every evaluated criterion is `met`, and there are no unknown, unsupported, uncovered, or contradictory requirements. A reliable failed inclusion or applicable exclusion still produces `known_mismatch` under incomplete coverage. All other incomplete, unsupported, stale, failed, or unknown cases return `unresolved`.
+
+A result is `known_mismatch` when a known fact fails an inclusion or satisfies an exclusion. Missing facts never produce `met`. Coverage completeness is preliminary protocol accounting, not confirmed eligibility or clinical validation. Overall aggregation rules must remain deterministic and documented in the Clinical Intelligence design.
 
 ---
 

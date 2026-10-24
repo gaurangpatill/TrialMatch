@@ -86,7 +86,7 @@ Run finite checks from the repository root:
 ```bash
 python -m compileall backend
 pytest
-cd frontend && npm run typecheck && npm run build
+cd frontend && npm test && npm run typecheck && npm run build
 ```
 
 Feature branches add tests alongside implementation. Never report a test, ingestion, integration, or demo as successful unless it was executed and verified.
