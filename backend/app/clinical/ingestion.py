@@ -11,7 +11,7 @@ from typing import Any
 
 from .client import ClinicalTrialsClient, PartialFetchError
 from .database import ClinicalRepository
-from .models import IngestionReport, IngestionStatus, Study
+from .models import DetailRetrievalStatus, IngestionReport, IngestionStatus, Study
 from .normalize import StudyNormalizationError, normalize_study, source_missing_values, source_structured_criteria
 
 
@@ -82,7 +82,11 @@ class ClinicalIngestionService:
                 await asyncio.sleep(detail_delay_seconds)
             try:
                 detail = await self.client.fetch_detail(nct_id)
-                detailed_study = normalize_study(detail.record, detail.retrieved_at)
+                detailed_study = normalize_study(
+                    detail.record,
+                    detail.retrieved_at,
+                    detail_status=DetailRetrievalStatus.RETRIEVED,
+                )
                 if detailed_study.nct_id != nct_id:
                     raise StudyNormalizationError(
                         f"detail identifier mismatch: requested {nct_id}, received {detailed_study.nct_id}"

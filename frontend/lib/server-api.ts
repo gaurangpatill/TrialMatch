@@ -57,6 +57,29 @@ export function isTrialSearchResponse(value: unknown): boolean {
   );
 }
 
+export function isStudyDetailResponse(value: unknown): boolean {
+  if (
+    !hasExactKeys(value, [
+      "nct_id", "title", "overall_status", "conditions", "phases", "eligibility_criteria",
+      "minimum_age", "maximum_age", "sex", "locations", "contacts", "source_url",
+      "retrieved_at", "detail_status", "detail_attempted_at", "retrieval_source",
+      "retrieval_message", "screening_coverage",
+    ])
+  ) return false;
+  return (
+    [value.nct_id, value.title, value.overall_status, value.source_url, value.retrieved_at,
+      value.retrieval_message].every((item) => typeof item === "string") &&
+    isStringArray(value.conditions) && isStringArray(value.phases) &&
+    [value.eligibility_criteria, value.minimum_age, value.maximum_age, value.sex,
+      value.detail_attempted_at].every((item) => typeof item === "string" || item === null) &&
+    Array.isArray(value.locations) && value.locations.every(isTrialLocation) &&
+    Array.isArray(value.contacts) && value.contacts.every(isTrialContact) &&
+    ["not_retrieved", "retrieved", "retrieval_failed"].includes(value.detail_status as string) &&
+    ["local_database", "official_cache", "official_api"].includes(value.retrieval_source as string) &&
+    isExtractionCoverage(value.screening_coverage)
+  );
+}
+
 export function isMatchResponse(value: unknown): boolean {
   if (!hasExactKeys(value, ["profile_id", "results", "disclaimer", "generated_at"])) return false;
   return (
@@ -82,6 +105,8 @@ function isTrialSummary(value: unknown): boolean {
       "locations",
       "source_url",
       "retrieved_at",
+      "detail_status",
+      "screening_coverage_status",
     ])
   ) return false;
   return (
@@ -94,7 +119,11 @@ function isTrialSummary(value: unknown): boolean {
       (item) => typeof item === "string" || item === null,
     ) &&
     Array.isArray(value.locations) &&
-    value.locations.every(isTrialLocation)
+    value.locations.every(isTrialLocation) &&
+    ["not_retrieved", "retrieved", "retrieval_failed"].includes(value.detail_status as string) &&
+    ["not_attempted", "partial", "complete", "failed", "stale"].includes(
+      value.screening_coverage_status as string,
+    )
   );
 }
 
@@ -108,15 +137,23 @@ function isTrialLocation(value: unknown): boolean {
       "country",
       "latitude",
       "longitude",
+      "recruiting_status",
     ])
   ) return false;
   return (
-    [value.facility, value.city, value.state, value.postal_code, value.country].every(
+    [value.facility, value.city, value.state, value.postal_code, value.country, value.recruiting_status].every(
       (item) => typeof item === "string" || item === null,
     ) &&
     [value.latitude, value.longitude].every(
       (item) => typeof item === "number" || item === null,
     )
+  );
+}
+
+function isTrialContact(value: unknown): boolean {
+  if (!hasExactKeys(value, ["name", "role", "phone", "email", "facility"])) return false;
+  return [value.name, value.role, value.phone, value.email, value.facility].every(
+    (item) => typeof item === "string" || item === null,
   );
 }
 

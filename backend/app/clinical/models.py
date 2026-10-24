@@ -40,6 +40,7 @@ class SourceIdentification(BaseModel):
 
     nct_id: str = Field(alias="nctId", pattern=r"^NCT\d{8}$")
     brief_title: str | None = Field(default=None, alias="briefTitle")
+    official_title: str | None = Field(default=None, alias="officialTitle")
 
 
 class SourceStatus(BaseModel):
@@ -89,6 +90,7 @@ class SourceLocation(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     facility: str | None = None
+    status: str | None = None
     city: str | None = None
     state: str | None = None
     postal_code: str | None = Field(default=None, alias="zip")
@@ -125,8 +127,15 @@ class SourceStudy(BaseModel):
     protocol: SourceProtocol = Field(alias="protocolSection")
 
 
+class DetailRetrievalStatus(str, Enum):
+    NOT_RETRIEVED = "not_retrieved"
+    RETRIEVED = "retrieved"
+    RETRIEVAL_FAILED = "retrieval_failed"
+
+
 class StudyLocation(StrictModel):
     facility: str | None = None
+    recruiting_status: str | None = None
     city: str | None = None
     state: str | None = None
     postal_code: str | None = None
@@ -159,6 +168,9 @@ class Study(StrictModel):
     retrieved_at: datetime
     source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     raw_source: dict[str, Any]
+    detail_status: DetailRetrievalStatus = DetailRetrievalStatus.NOT_RETRIEVED
+    detail_attempted_at: datetime | None = None
+    detail_error_code: str | None = None
 
 
 class IngestionStatus(str, Enum):
@@ -546,6 +558,8 @@ class StudySummary(StrictModel):
     locations: list[StudyLocation]
     source_url: str
     retrieved_at: datetime
+    detail_status: DetailRetrievalStatus
+    screening_coverage_status: ExtractionCoverageStatus
 
 
 class Pagination(StrictModel):
@@ -586,6 +600,27 @@ class ExtractionCoverageSummary(StrictModel):
     independently_verified: bool = False
     verification_method: str | None = None
     reason: str
+
+
+class StudyDetailResponse(StrictModel):
+    nct_id: str
+    title: str
+    overall_status: str
+    conditions: list[str]
+    phases: list[str]
+    eligibility_criteria: str | None
+    minimum_age: str | None
+    maximum_age: str | None
+    sex: str | None
+    locations: list[StudyLocation]
+    contacts: list[StudyContact]
+    source_url: str
+    retrieved_at: datetime
+    detail_status: DetailRetrievalStatus
+    detail_attempted_at: datetime | None
+    retrieval_source: Literal["local_database", "official_cache", "official_api"]
+    retrieval_message: str
+    screening_coverage: ExtractionCoverageSummary
 
 
 class TrialMatchResult(StrictModel):

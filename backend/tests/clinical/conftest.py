@@ -44,6 +44,7 @@ def source_record_factory():
                 "locations": [
                     {
                         "facility": "Synthetic Facility",
+                        "status": "RECRUITING",
                         "city": "Boston",
                         "state": "Massachusetts",
                         "zip": "02108",

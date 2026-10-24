@@ -14,6 +14,7 @@ from .models import (
     CriterionAttribute,
     CriterionClassification,
     CriterionOperator,
+    DetailRetrievalStatus,
     Predicate,
     SourceStudy,
     StructuredCriterion,
@@ -27,7 +28,12 @@ class StudyNormalizationError(ValueError):
     pass
 
 
-def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None) -> Study:
+def normalize_study(
+    record: dict[str, Any],
+    retrieved_at: datetime | None = None,
+    *,
+    detail_status: DetailRetrievalStatus | None = None,
+) -> Study:
     try:
         source = SourceStudy.model_validate(record)
     except ValidationError as exc:
@@ -46,6 +52,7 @@ def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None
         locations.append(
             StudyLocation(
                 facility=location.facility,
+                recruiting_status=location.status,
                 city=location.city,
                 state=location.state,
                 postal_code=location.postal_code,
@@ -72,9 +79,19 @@ def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None
     canonical = json.dumps(record, sort_keys=True, separators=(",", ":"))
     source_hash = hashlib.sha256(canonical.encode()).hexdigest()
     eligibility = source.protocol.eligibility
+    timestamp = retrieved_at or datetime.now(UTC)
+    protocol = record.get("protocolSection", {})
+    resolved_detail_status = detail_status or (
+        DetailRetrievalStatus.RETRIEVED
+        if any(
+            key in protocol
+            for key in ("eligibilityModule", "contactsLocationsModule", "descriptionModule")
+        )
+        else DetailRetrievalStatus.NOT_RETRIEVED
+    )
     return Study(
         nct_id=identification.nct_id,
-        title=identification.brief_title.strip(),
+        title=(identification.official_title or identification.brief_title).strip(),
         overall_status=status.strip(),
         conditions=[value.strip() for value in source.protocol.conditions.conditions if value.strip()],
         phases=[value.strip() for value in source.protocol.design.phases if value.strip()],
@@ -85,9 +102,13 @@ def normalize_study(record: dict[str, Any], retrieved_at: datetime | None = None
         locations=locations,
         contacts=unique_contacts,
         source_url=f"https://clinicaltrials.gov/study/{identification.nct_id}",
-        retrieved_at=retrieved_at or datetime.now(UTC),
+        retrieved_at=timestamp,
         source_hash=source_hash,
         raw_source=record,
+        detail_status=resolved_detail_status,
+        detail_attempted_at=(
+            timestamp if resolved_detail_status == DetailRetrievalStatus.RETRIEVED else None
+        ),
     )
 
 

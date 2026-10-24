@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, it, vi} from "vitest";
 
+import {GET as GET_DETAIL} from "../app/api/trials/[nctId]/route";
 import {POST} from "../app/api/match/route";
 import {GET} from "../app/api/trials/route";
 
@@ -161,5 +162,73 @@ describe("clinical API proxies", () => {
 
     expect(valid.status).toBe(200);
     expect(invalid.status).toBe(502);
+  });
+});
+
+
+describe("clinical study detail proxy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("accepts source-faithful detail and forwards an explicit refresh", async () => {
+    const detail = {
+      nct_id: "NCT00471978",
+      title: "DNA Analysis of Blood and Tissue From Patients With Lung Cancer",
+      overall_status: "RECRUITING",
+      conditions: ["Lung Cancer"],
+      phases: [],
+      eligibility_criteria: "Newly diagnosed primary lung cancer",
+      minimum_age: "18 Years",
+      maximum_age: "120 Years",
+      sex: "ALL",
+      locations: [{
+        facility: "Massachusetts General Hospital",
+        recruiting_status: "RECRUITING",
+        city: "Boston",
+        state: "Massachusetts",
+        postal_code: "02114",
+        country: "United States",
+        latitude: 42.35843,
+        longitude: -71.05977,
+      }],
+      contacts: [{
+        name: "Clinical Trials Office",
+        role: "CONTACT",
+        phone: "000-000-0000",
+        email: null,
+        facility: "Massachusetts General Hospital",
+      }],
+      source_url: "https://clinicaltrials.gov/study/NCT00471978",
+      retrieved_at: "2026-10-24T19:00:00Z",
+      detail_status: "retrieved",
+      detail_attempted_at: "2026-10-24T19:00:00Z",
+      retrieval_source: "official_api",
+      retrieval_message: "Official study detail is available.",
+      screening_coverage: {
+        status: "partial",
+        protocol_item_count: 4,
+        accounted_item_count: 3,
+        evaluable_criterion_count: 3,
+        unsupported_protocol_requirement_count: 0,
+        uncovered_protocol_requirement_count: 1,
+        independently_verified: false,
+        verification_method: null,
+        reason: "Eligibility extraction is partial.",
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(detail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await GET_DETAIL(
+      new Request("http://trialmatch.test/api/trials/NCT00471978?refresh=true"),
+      {params: Promise.resolve({nctId: "NCT00471978"})},
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(detail);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("refresh=true");
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });

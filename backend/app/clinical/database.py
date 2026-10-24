@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing
@@ -10,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .models import IngestionReport, StructuredCriterion, Study
+from .models import DetailRetrievalStatus, IngestionReport, StructuredCriterion, Study
 
 
 SCHEMA = """
@@ -30,7 +31,10 @@ CREATE TABLE IF NOT EXISTS studies (
     source_url TEXT NOT NULL,
     retrieved_at TEXT NOT NULL,
     source_hash TEXT NOT NULL,
-    raw_json TEXT NOT NULL
+    raw_json TEXT NOT NULL,
+    detail_status TEXT NOT NULL DEFAULT 'not_retrieved',
+    detail_attempted_at TEXT,
+    detail_error_code TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_studies_status_nct ON studies(overall_status, nct_id);
 CREATE INDEX IF NOT EXISTS idx_studies_title ON studies(title);
@@ -111,6 +115,29 @@ class ClinicalRepository:
     def initialize(self) -> None:
         with closing(self._connect()) as connection:
             connection.executescript(SCHEMA)
+            study_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(studies)")
+            }
+            if "detail_status" not in study_columns:
+                connection.execute(
+                    "ALTER TABLE studies ADD COLUMN detail_status TEXT NOT NULL DEFAULT 'not_retrieved'"
+                )
+            if "detail_attempted_at" not in study_columns:
+                connection.execute("ALTER TABLE studies ADD COLUMN detail_attempted_at TEXT")
+            if "detail_error_code" not in study_columns:
+                connection.execute("ALTER TABLE studies ADD COLUMN detail_error_code TEXT")
+            # Preserve previously expanded rows when migrating an existing database. The
+            # indexed list payload contains none of these detail-only source modules.
+            connection.execute(
+                """
+                UPDATE studies
+                SET detail_status = 'retrieved', detail_attempted_at = retrieved_at
+                WHERE detail_status = 'not_retrieved'
+                  AND (raw_json LIKE '%\"eligibilityModule\"%'
+                       OR raw_json LIKE '%\"contactsLocationsModule\"%'
+                       OR raw_json LIKE '%\"descriptionModule\"%')
+                """
+            )
             columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(ingestion_runs)")
             }
@@ -158,6 +185,9 @@ class ClinicalRepository:
                 study.retrieved_at.isoformat(),
                 study.source_hash,
                 json.dumps(study.raw_source, sort_keys=True),
+                study.detail_status.value,
+                study.detail_attempted_at.isoformat() if study.detail_attempted_at else None,
+                study.detail_error_code,
             )
             for study in studies
         ]
@@ -172,23 +202,61 @@ class ClinicalRepository:
                 nct_id, title, overall_status, conditions_json, phases_json,
                 eligibility_criteria, minimum_age, maximum_age, sex,
                 locations_json, contacts_json, source_url, retrieved_at,
-                source_hash, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_hash, raw_json, detail_status, detail_attempted_at,
+                detail_error_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(nct_id) DO UPDATE SET
-                title=excluded.title,
-                overall_status=excluded.overall_status,
-                conditions_json=excluded.conditions_json,
-                phases_json=excluded.phases_json,
-                eligibility_criteria=excluded.eligibility_criteria,
-                minimum_age=excluded.minimum_age,
-                maximum_age=excluded.maximum_age,
-                sex=excluded.sex,
-                locations_json=excluded.locations_json,
-                contacts_json=excluded.contacts_json,
-                source_url=excluded.source_url,
-                retrieved_at=excluded.retrieved_at,
-                source_hash=excluded.source_hash,
-                raw_json=excluded.raw_json
+                title=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.title ELSE excluded.title END,
+                overall_status=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.overall_status ELSE excluded.overall_status END,
+                conditions_json=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.conditions_json ELSE excluded.conditions_json END,
+                phases_json=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.phases_json ELSE excluded.phases_json END,
+                eligibility_criteria=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.eligibility_criteria ELSE excluded.eligibility_criteria END,
+                minimum_age=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.minimum_age ELSE excluded.minimum_age END,
+                maximum_age=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.maximum_age ELSE excluded.maximum_age END,
+                sex=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.sex ELSE excluded.sex END,
+                locations_json=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.locations_json ELSE excluded.locations_json END,
+                contacts_json=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.contacts_json ELSE excluded.contacts_json END,
+                source_url=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.source_url ELSE excluded.source_url END,
+                retrieved_at=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.retrieved_at ELSE excluded.retrieved_at END,
+                source_hash=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.source_hash ELSE excluded.source_hash END,
+                raw_json=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.raw_json ELSE excluded.raw_json END,
+                detail_status=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.detail_status ELSE excluded.detail_status END,
+                detail_attempted_at=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.detail_attempted_at ELSE excluded.detail_attempted_at END,
+                detail_error_code=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.detail_error_code ELSE excluded.detail_error_code END
             """,
             payloads,
         )
@@ -249,14 +317,31 @@ class ClinicalRepository:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("CREATE TEMP TABLE published_snapshot_ids (nct_id TEXT PRIMARY KEY)")
+            connection.execute("CREATE TEMP TABLE expanded_snapshot_ids (nct_id TEXT PRIMARY KEY)")
             connection.executemany(
                 "INSERT INTO published_snapshot_ids (nct_id) VALUES (?)", identifiers
+            )
+            connection.executemany(
+                "INSERT INTO expanded_snapshot_ids (nct_id) VALUES (?)",
+                [
+                    (study.nct_id,)
+                    for study in studies_list
+                    if study.detail_status == DetailRetrievalStatus.RETRIEVED
+                ],
             )
             self._upsert_on_connection(connection, payloads)
             connection.execute(
                 "DELETE FROM studies WHERE nct_id NOT IN (SELECT nct_id FROM published_snapshot_ids)"
             )
-            connection.execute("DELETE FROM criteria WHERE extraction_method = 'source_structured'")
+            # A list-only snapshot must not erase source-structured rules belonging to a
+            # previously expanded record that the upsert deliberately preserved.
+            connection.execute(
+                """
+                DELETE FROM criteria
+                WHERE extraction_method = 'source_structured'
+                  AND nct_id IN (SELECT nct_id FROM expanded_snapshot_ids)
+                """
+            )
             connection.executemany(
                 "INSERT INTO criteria (criterion_id, nct_id, extraction_method, payload_json) VALUES (?, ?, ?, ?)",
                 [
@@ -310,6 +395,8 @@ class ClinicalRepository:
         query: str | None = None,
         condition: str | None = None,
         phase: str | None = None,
+        age_years: float | None = None,
+        location: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Study], int]:
@@ -332,6 +419,32 @@ class ClinicalRepository:
         if phase:
             needle = phase.strip().casefold()
             studies = [study for study in studies if any(item.casefold() == needle for item in study.phases)]
+        if age_years is not None:
+            studies = [
+                study
+                for study in studies
+                if (_age_to_years(study.minimum_age) is not None)
+                and (_age_to_years(study.maximum_age) is not None)
+                and age_years >= _age_to_years(study.minimum_age)  # type: ignore[operator]
+                and age_years <= _age_to_years(study.maximum_age)  # type: ignore[operator]
+            ]
+        if location:
+            needle = location.strip().casefold()
+            studies = [
+                study
+                for study in studies
+                if any(
+                    needle in (value or "").casefold()
+                    for item in study.locations
+                    for value in (item.facility, item.city, item.state, item.country)
+                )
+            ]
+        studies.sort(
+            key=lambda study: (
+                study.detail_status != DetailRetrievalStatus.RETRIEVED,
+                study.nct_id,
+            )
+        )
         total = len(studies)
         start = (page - 1) * page_size
         return studies[start : start + page_size], total
@@ -351,6 +464,25 @@ class ClinicalRepository:
                     nct_ids,
                 ).fetchall()
         return [self._row_to_study(row) for row in rows]
+
+    def get_study(self, nct_id: str) -> Study | None:
+        studies = self.get_studies([nct_id], limit=1)
+        return studies[0] if studies else None
+
+    def record_detail_failure(self, nct_id: str, attempted_at: datetime, error_code: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE studies
+                SET detail_status = CASE WHEN detail_status = 'retrieved'
+                                         THEN detail_status ELSE 'retrieval_failed' END,
+                    detail_attempted_at = ?,
+                    detail_error_code = ?
+                WHERE nct_id = ?
+                """,
+                (attempted_at.isoformat(), error_code, nct_id),
+            )
+            connection.commit()
 
     def latest_retrieved_at(self) -> datetime | None:
         with closing(self._connect()) as connection:
@@ -636,5 +768,28 @@ class ClinicalRepository:
                 "retrieved_at": row["retrieved_at"],
                 "source_hash": row["source_hash"],
                 "raw_source": json.loads(row["raw_json"]),
+                "detail_status": row["detail_status"],
+                "detail_attempted_at": row["detail_attempted_at"],
+                "detail_error_code": row["detail_error_code"],
             }
         )
+
+
+def _age_to_years(value: str | None) -> float | None:
+    if not value:
+        return None
+    match = re.fullmatch(
+        r"\s*(\d+(?:\.\d+)?)\s+(Year|Years|Month|Months|Week|Weeks|Day|Days)\s*",
+        value,
+    )
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = match.group(2).casefold()
+    if unit.startswith("year"):
+        return number
+    if unit.startswith("month"):
+        return number / 12
+    if unit.startswith("week"):
+        return number / 52.1429
+    return number / 365.2425

@@ -72,10 +72,10 @@ class ClinicalTrialsClient:
     ):
         self.base_url = (base_url or os.getenv("CLINICALTRIALS_API_BASE_URL", DEFAULT_BASE_URL)).rstrip("/")
         self.timeout_seconds = timeout_seconds or float(
-            os.getenv("CLINICALTRIALS_REQUEST_TIMEOUT_SECONDS", "30")
+            os.getenv("CLINICALTRIALS_REQUEST_TIMEOUT_SECONDS", "6")
         )
         self.max_retries = max_retries if max_retries is not None else int(
-            os.getenv("CLINICALTRIALS_MAX_RETRIES", "3")
+            os.getenv("CLINICALTRIALS_MAX_RETRIES", "1")
         )
         self.cache_dir = Path(
             cache_dir or os.getenv("CLINICALTRIALS_CACHE_DIR", "backend/data/cache/clinicaltrials")

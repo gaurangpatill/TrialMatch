@@ -1,11 +1,41 @@
+export type DetailRetrievalStatus = "not_retrieved" | "retrieved" | "retrieval_failed";
+
 export type TrialLocation = {
   facility: string | null;
+  recruiting_status: string | null;
   city: string | null;
   state: string | null;
   postal_code: string | null;
   country: string | null;
   latitude: number | null;
   longitude: number | null;
+};
+
+export type TrialContact = {
+  name: string | null;
+  role: string | null;
+  phone: string | null;
+  email: string | null;
+  facility: string | null;
+};
+
+export type ExtractionCoverageStatus =
+  | "not_attempted"
+  | "partial"
+  | "complete"
+  | "failed"
+  | "stale";
+
+export type ExtractionCoverage = {
+  status: ExtractionCoverageStatus;
+  protocol_item_count: number | null;
+  accounted_item_count: number;
+  evaluable_criterion_count: number;
+  unsupported_protocol_requirement_count: number;
+  uncovered_protocol_requirement_count: number;
+  independently_verified: boolean;
+  verification_method: string | null;
+  reason: string;
 };
 
 export type TrialSummary = {
@@ -20,6 +50,29 @@ export type TrialSummary = {
   locations: TrialLocation[];
   source_url: string;
   retrieved_at: string;
+  detail_status: DetailRetrievalStatus;
+  screening_coverage_status: ExtractionCoverageStatus;
+};
+
+export type TrialDetail = {
+  nct_id: string;
+  title: string;
+  overall_status: string;
+  conditions: string[];
+  phases: string[];
+  eligibility_criteria: string | null;
+  minimum_age: string | null;
+  maximum_age: string | null;
+  sex: string | null;
+  locations: TrialLocation[];
+  contacts: TrialContact[];
+  source_url: string;
+  retrieved_at: string;
+  detail_status: DetailRetrievalStatus;
+  detail_attempted_at: string | null;
+  retrieval_source: "local_database" | "official_cache" | "official_api";
+  retrieval_message: string;
+  screening_coverage: ExtractionCoverage;
 };
 
 export type TrialSearchResponse = {
@@ -38,12 +91,6 @@ export type TrialSearchResponse = {
 
 export type CriterionStatus = "met" | "not_met" | "unknown";
 export type ScreeningStatus = "potential_match" | "known_mismatch" | "unresolved";
-export type ExtractionCoverageStatus =
-  | "not_attempted"
-  | "partial"
-  | "complete"
-  | "failed"
-  | "stale";
 
 export type MatchResponse = {
   profile_id: string;
@@ -51,17 +98,7 @@ export type MatchResponse = {
     nct_id: string;
     title: string;
     screening_status: ScreeningStatus;
-    extraction_coverage: {
-      status: ExtractionCoverageStatus;
-      protocol_item_count: number | null;
-      accounted_item_count: number;
-      evaluable_criterion_count: number;
-      unsupported_protocol_requirement_count: number;
-      uncovered_protocol_requirement_count: number;
-      independently_verified: boolean;
-      verification_method: string | null;
-      reason: string;
-    };
+    extraction_coverage: ExtractionCoverage;
     criteria: Array<{
       criterion_id: string;
       classification: "inclusion" | "exclusion";

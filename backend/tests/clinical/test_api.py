@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
+
+import pytest
 from fastapi.testclient import TestClient
 
+import backend.app.clinical.router as clinical_router
+from backend.app.clinical.client import DetailResult
 from backend.app.clinical.database import ClinicalRepository
 from backend.app.clinical.dependencies import get_repository
-from backend.app.clinical.normalize import source_structured_criteria
+from backend.app.clinical.models import DetailRetrievalStatus
+from backend.app.clinical.normalize import normalize_study, source_structured_criteria
 from backend.app.main import app
 
 
@@ -101,3 +108,102 @@ def test_validation_error_uses_shared_envelope(tmp_path):
     assert body["code"] == "VALIDATION_ERROR"
     assert body["details"][0]["field"] == "page_size"
     assert body["request_id"]
+
+
+def test_trial_detail_uses_expanded_local_record(study_factory, tmp_path):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    study = study_factory()
+    repository.upsert_studies([study])
+
+    with client_with_repository(repository) as client:
+        response = client.get(f"/api/trials/{study.nct_id}")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["detail_status"] == "retrieved"
+    assert body["retrieval_source"] == "local_database"
+    assert body["minimum_age"] == "18 Years"
+    assert body["sex"] == "ALL"
+    assert body["locations"][0]["facility"] == "Synthetic Facility"
+    assert body["locations"][0]["recruiting_status"] == "RECRUITING"
+    assert body["contacts"][0]["email"] == "test@example.invalid"
+
+
+@pytest.mark.asyncio
+async def test_detail_fetch_is_deduplicated_and_persisted(
+    source_record_factory, tmp_path, monkeypatch
+):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    indexed = source_record_factory()
+    indexed["protocolSection"].pop("eligibilityModule")
+    indexed["protocolSection"].pop("contactsLocationsModule")
+    repository.upsert_studies([normalize_study(indexed)])
+    detail_record = source_record_factory()
+    calls = 0
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def fetch_detail(self, nct_id, *, use_cache=True):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.01)
+            return DetailResult(
+                record=detail_record,
+                retrieved_at=datetime(2026, 10, 24, 19, 0, tzinfo=UTC),
+                from_cache=False,
+            )
+
+    monkeypatch.setattr(clinical_router, "ClinicalTrialsClient", FakeClient)
+    first, second = await asyncio.gather(
+        clinical_router._get_or_fetch_detail(repository, "NCT00000001", refresh=False),
+        clinical_router._get_or_fetch_detail(repository, "NCT00000001", refresh=False),
+    )
+
+    assert calls == 1
+    assert first[0].detail_status == DetailRetrievalStatus.RETRIEVED
+    assert second[0].locations[0].city == "Boston"
+    stored = repository.get_study("NCT00000001")
+    assert stored is not None
+    assert stored.minimum_age == "18 Years"
+    assert stored.contacts[0].email == "test@example.invalid"
+
+
+def test_trial_detail_retrieval_failure_keeps_missing_values_unknown(
+    source_record_factory, tmp_path, monkeypatch
+):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    indexed = source_record_factory()
+    indexed["protocolSection"].pop("eligibilityModule")
+    indexed["protocolSection"].pop("contactsLocationsModule")
+    study = normalize_study(indexed)
+    repository.upsert_studies([study])
+
+    class FailingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def fetch_detail(self, nct_id, *, use_cache=True):
+            raise TimeoutError("synthetic timeout")
+
+    monkeypatch.setattr(clinical_router, "ClinicalTrialsClient", FailingClient)
+    with client_with_repository(repository) as client:
+        response = client.get(f"/api/trials/{study.nct_id}")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["detail_status"] == "retrieval_failed"
+    assert body["minimum_age"] is None
+    assert body["sex"] is None
+    assert body["locations"] == []
+    assert "does not mean" not in body["retrieval_message"].lower()
+    assert "missing values remain unknown" in body["retrieval_message"].lower()

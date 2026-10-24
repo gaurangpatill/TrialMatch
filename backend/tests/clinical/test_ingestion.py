@@ -7,7 +7,11 @@ import pytest
 
 from backend.app.clinical.client import ClinicalTrialsClient, PartialFetchError
 from backend.app.clinical.database import ClinicalRepository
-from backend.app.clinical.normalize import StudyNormalizationError, normalize_study
+from backend.app.clinical.normalize import (
+    StudyNormalizationError,
+    normalize_study,
+    source_structured_criteria,
+)
 
 
 @pytest.mark.asyncio
@@ -107,10 +111,16 @@ async def test_detail_is_cached_atomically(source_record_factory, tmp_path):
 
 
 def test_normalization_preserves_source_fields_and_evidence(source_record_factory):
-    study = normalize_study(source_record_factory())
+    record = source_record_factory()
+    record["protocolSection"]["identificationModule"]["officialTitle"] = (
+        "Full Official Synthetic Study Title"
+    )
+    study = normalize_study(record)
     assert study.nct_id == "NCT00000001"
+    assert study.title == "Full Official Synthetic Study Title"
     assert study.eligibility_criteria == "Participants must be 18 years or older."
     assert study.locations[0].facility == "Synthetic Facility"
+    assert study.locations[0].recruiting_status == "RECRUITING"
     assert study.contacts[0].email == "test@example.invalid"
     assert study.source_url.endswith(study.nct_id)
     assert study.raw_source["protocolSection"]["eligibilityModule"]["minimumAge"] == "18 Years"
@@ -150,3 +160,29 @@ def test_repository_search_is_deterministic(study_factory, tmp_path):
     studies, total = repository.search_studies(condition="cancer")
     assert total == 1
     assert studies[0].nct_id == "NCT00000002"
+
+
+def test_list_snapshot_does_not_overwrite_expanded_detail_or_criteria(
+    source_record_factory, tmp_path
+):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    detailed = normalize_study(source_record_factory())
+    repository.upsert_studies([detailed])
+    repository.replace_criteria(
+        detailed.nct_id, "source_structured", source_structured_criteria(detailed)
+    )
+
+    indexed_record = source_record_factory(title="Updated list-only title")
+    indexed_record["protocolSection"].pop("eligibilityModule")
+    indexed_record["protocolSection"].pop("contactsLocationsModule")
+    indexed = normalize_study(indexed_record)
+    repository.publish_complete_snapshot([indexed], {indexed.nct_id: []})
+
+    preserved = repository.get_study(detailed.nct_id)
+    assert preserved is not None
+    assert preserved.title == detailed.title
+    assert preserved.minimum_age == "18 Years"
+    assert preserved.locations[0].facility == "Synthetic Facility"
+    assert repository.get_criteria(
+        detailed.nct_id, source_hash=preserved.source_hash
+    )
