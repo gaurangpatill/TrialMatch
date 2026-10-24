@@ -11,6 +11,7 @@ from .client import ClinicalTrialsClient
 from .database import ClinicalRepository
 from .extraction import EligibilityExtractor, ExtractionError, provider_from_environment
 from .ingestion import ClinicalIngestionService, update_manifest, write_report
+from .sites import build_site_export, write_site_export
 
 
 def parser() -> argparse.ArgumentParser:
@@ -23,6 +24,8 @@ def parser() -> argparse.ArgumentParser:
     ingest.add_argument("--page-size", type=int, default=1000)
     ingest.add_argument("--detail-limit", type=int, default=20)
     ingest.add_argument("--detail-id", action="append", dest="detail_ids")
+    ingest.add_argument("--detail-condition", action="append", dest="detail_conditions")
+    ingest.add_argument("--detail-delay-seconds", type=float, default=0)
     ingest.add_argument(
         "--report", default="backend/data/cache/clinicaltrials/latest_ingestion_report.json"
     )
@@ -31,6 +34,18 @@ def parser() -> argparse.ArgumentParser:
     extract = commands.add_parser("extract", help="extract criteria for detailed cached studies")
     extract.add_argument("--database", default="backend/data/trialmatch.sqlite3")
     extract.add_argument("--limit", type=int, default=20)
+
+    export_sites = commands.add_parser(
+        "export-sites", help="export validated Massachusetts recruiting facilities"
+    )
+    export_sites.add_argument("--database", default="backend/data/trialmatch.sqlite3")
+    export_sites.add_argument(
+        "--output", default="backend/data/exports/ma_trial_sites.json"
+    )
+    export_sites.add_argument(
+        "--cohort-description",
+        default="All expanded individual study records in the local clinical snapshot",
+    )
     return root
 
 
@@ -41,6 +56,8 @@ async def run_ingest(args: argparse.Namespace) -> int:
             page_size=args.page_size,
             detail_limit=args.detail_limit,
             detail_ids=args.detail_ids,
+            detail_conditions=args.detail_conditions,
+            detail_delay_seconds=args.detail_delay_seconds,
         )
     write_report(report, args.report)
     if args.update_manifest:
@@ -77,12 +94,36 @@ async def run_extract(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+async def run_export_sites(args: argparse.Namespace) -> int:
+    repository = ClinicalRepository(args.database)
+    export = build_site_export(
+        repository, cohort_selection=args.cohort_description
+    )
+    write_site_export(export, args.output)
+    print(
+        json.dumps(
+            {
+                "output": str(Path(args.output)),
+                "exported_records": export.metadata.exported_record_count,
+                "exported_studies": export.metadata.exported_study_count,
+                "resolved_coordinates": export.metadata.resolved_coordinate_count,
+                "unresolved_coordinates": export.metadata.unresolved_coordinate_count,
+                "expanded_studies": export.metadata.expanded_study_count,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 async def async_main() -> int:
     args = parser().parse_args()
     if args.command == "ingest":
         return await run_ingest(args)
     if args.command == "extract":
         return await run_extract(args)
+    if args.command == "export-sites":
+        return await run_export_sites(args)
     raise AssertionError(f"unhandled command {args.command}")
 
 

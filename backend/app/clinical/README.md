@@ -9,13 +9,29 @@ From the repository root with the Python 3.11 environment active:
 ```bash
 python -m backend.app.clinical.cli ingest \
   --page-size 1000 \
-  --detail-limit 20 \
+  --detail-limit 100 \
+  --detail-condition cancer \
+  --detail-delay-seconds 0.25 \
   --update-manifest backend/data/manifest.json
 ```
 
 The command follows `nextPageToken` to completion, rejects repeated tokens, records duplicates/missing values/exclusions, fetches selected detailed studies, caches successful details, writes a local ignored SQLite database, and updates only the clinical manifest entry when explicitly requested.
 
-The verified 2026-10-24 run is recorded in `backend/data/manifest.json`: 3,145 source records across four pages, 3,145 accepted, zero duplicate NCT IDs, zero excluded records, and 20 detailed records. Counts are source observations at that acquisition time, not permanent guarantees.
+The verified 2026-10-24 run is recorded in `backend/data/manifest.json`: 3,145 source records across four pages, 3,145 accepted, zero duplicate NCT IDs, zero excluded records, and 100 detailed cancer-related records selected deterministically by NCT ID. Counts are source observations at that acquisition time, not permanent guarantees.
+
+## Massachusetts recruiting-site export
+
+Generate the committed geographic handoff from the expanded local records:
+
+```bash
+python -m backend.app.clinical.cli export-sites \
+  --output backend/data/exports/ma_trial_sites.json \
+  --cohort-description "100 cancer-related recruiting studies selected deterministically by NCT ID from title/condition matches; expanded from the 3,145-study Massachusetts recruiting snapshot acquired 2026-10-24"
+```
+
+`backend/data/exports/ma_trial_sites.json` contains metadata, primary `records`, and one-to-one `geography_records`. The latter exactly matches the geographic branch's strict `TrialSite` fields; the primary records additionally expose required `coordinate_status` and source facility recruitment status.
+
+The generated artifact contains 149 explicitly Massachusetts, site-level `RECRUITING` facilities across 86 NCT IDs and 72 normalized facility/location tuples. All 149 have source-provided coordinate pairs; no geocoding was performed. The exporter preserves unresolved facilities when encountered, but this cohort contains zero. It excludes and counts inactive/unknown site statuses and missing facility names. This is a partial cancer-focused 100-study detail cohort, not complete Massachusetts geographic coverage.
 
 ## Strict extraction
 

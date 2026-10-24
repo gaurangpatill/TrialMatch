@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import Counter
 from datetime import UTC, datetime
@@ -25,6 +26,8 @@ class ClinicalIngestionService:
         page_size: int = 1000,
         detail_limit: int = 20,
         detail_ids: list[str] | None = None,
+        detail_conditions: list[str] | None = None,
+        detail_delay_seconds: float = 0,
     ) -> IngestionReport:
         started_at = datetime.now(UTC)
         errors: list[str] = []
@@ -57,10 +60,26 @@ class ClinicalIngestionService:
             normalized[study.nct_id] = study
             missing_counts.update(source_missing_values(study))
 
-        selected_ids = detail_ids if detail_ids is not None else sorted(normalized)[:detail_limit]
-        selected_ids = [nct_id for nct_id in selected_ids if nct_id in normalized]
+        if detail_ids is not None:
+            selected_ids = [nct_id for nct_id in detail_ids if nct_id in normalized]
+        else:
+            detail_candidates = sorted(normalized.values(), key=lambda study: study.nct_id)
+            if detail_conditions:
+                needles = [value.strip().casefold() for value in detail_conditions if value.strip()]
+                detail_candidates = [
+                    study
+                    for study in detail_candidates
+                    if any(
+                        needle in study.title.casefold()
+                        or any(needle in condition.casefold() for condition in study.conditions)
+                        for needle in needles
+                    )
+                ]
+            selected_ids = [study.nct_id for study in detail_candidates[:detail_limit]]
         detail_retrieved = 0
-        for nct_id in selected_ids:
+        for index, nct_id in enumerate(selected_ids):
+            if index and detail_delay_seconds:
+                await asyncio.sleep(detail_delay_seconds)
             try:
                 detail = await self.client.fetch_detail(nct_id)
                 detailed_study = normalize_study(detail.record, detail.retrieved_at)
