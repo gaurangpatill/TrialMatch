@@ -58,20 +58,22 @@ export function isTrialSearchResponse(value: unknown): boolean {
 }
 
 export function isStudyDetailResponse(value: unknown): boolean {
-  if (
-    !hasExactKeys(value, [
-      "nct_id", "title", "overall_status", "conditions", "phases", "eligibility_criteria",
-      "minimum_age", "maximum_age", "sex", "locations", "contacts", "source_url",
-      "retrieved_at", "detail_status", "detail_attempted_at", "retrieval_source",
-      "retrieval_message", "screening_coverage",
-    ])
-  ) return false;
+  const baseKeys = [
+    "nct_id", "title", "overall_status", "conditions", "phases", "eligibility_criteria",
+    "minimum_age", "maximum_age", "sex", "locations", "contacts", "source_url",
+    "retrieved_at", "detail_status", "detail_attempted_at", "retrieval_source",
+    "retrieval_message", "screening_coverage",
+  ] as const;
+  const summaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
+  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, summaryKeys)) return false;
   return (
     [value.nct_id, value.title, value.overall_status, value.source_url, value.retrieved_at,
       value.retrieval_message].every((item) => typeof item === "string") &&
     isStringArray(value.conditions) && isStringArray(value.phases) &&
     [value.eligibility_criteria, value.minimum_age, value.maximum_age, value.sex,
-      value.detail_attempted_at].every((item) => typeof item === "string" || item === null) &&
+      value.detail_attempted_at, (value as Record<string, unknown>).source_description, (value as Record<string, unknown>).plain_language_summary].every(
+        (item) => typeof item === "string" || item === null || item === undefined,
+      ) &&
     Array.isArray(value.locations) && value.locations.every(isTrialLocation) &&
     Array.isArray(value.contacts) && value.contacts.every(isTrialContact) &&
     ["not_retrieved", "retrieved", "retrieval_failed"].includes(value.detail_status as string) &&
@@ -92,31 +94,23 @@ export function isMatchResponse(value: unknown): boolean {
 }
 
 function isTrialSummary(value: unknown): boolean {
-  if (
-    !hasExactKeys(value, [
-      "nct_id",
-      "title",
-      "overall_status",
-      "conditions",
-      "phases",
-      "minimum_age",
-      "maximum_age",
-      "sex",
-      "locations",
-      "source_url",
-      "retrieved_at",
-      "detail_status",
-      "screening_coverage_status",
-    ])
-  ) return false;
+  const baseKeys = [
+    "nct_id", "title", "overall_status", "conditions", "phases", "minimum_age",
+    "maximum_age", "sex", "locations", "source_url", "retrieved_at", "detail_status",
+    "screening_coverage_status",
+  ] as const;
+  const summaryKeys = [...baseKeys, "source_description", "plain_language_summary"] as const;
+  if (!hasExactKeys(value, baseKeys) && !hasExactKeys(value, summaryKeys)) return false;
   return (
     [value.nct_id, value.title, value.overall_status, value.source_url, value.retrieved_at].every(
       (item) => typeof item === "string",
     ) &&
     isStringArray(value.conditions) &&
     isStringArray(value.phases) &&
-    [value.minimum_age, value.maximum_age, value.sex].every(
-      (item) => typeof item === "string" || item === null,
+    [value.minimum_age, value.maximum_age, value.sex,
+      (value as Record<string, unknown>).source_description,
+      (value as Record<string, unknown>).plain_language_summary].every(
+      (item) => typeof item === "string" || item === null || item === undefined,
     ) &&
     Array.isArray(value.locations) &&
     value.locations.every(isTrialLocation) &&
