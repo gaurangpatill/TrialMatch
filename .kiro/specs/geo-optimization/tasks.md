@@ -2,22 +2,23 @@
 
 Implement on `feature/geo-optimization`. Check a task only after its acceptance evidence is executed. Do not edit clinical-owned paths.
 
-- [ ] **G1. Establish geography/source models and persistence boundaries**
+- [x] **G1. Establish geography/source models and persistence boundaries**
   - Define ArcGIS envelopes, normalized block groups, municipalities, source-run metadata, sites, and derived metrics.
   - Define SQLite repository interfaces/schema with explicit null/unit semantics.
   - Test schema validation and aggregate-vs-patient boundaries.
   - _Requirements: R1, R2_
 
-- [ ] **G2. Implement complete official MassGIS ingestion**
+- [x] **G2. Implement complete official MassGIS ingestion**
   - Add metadata/count discovery and offset pagination with transfer-limit/repeated-page guards.
   - Persist/cache source snapshots and acquisition metadata safely.
   - Test multipage, duplicate, malformed, missing-field, partial, and retry behavior.
   - _Requirements: R1_
 
-- [ ] **G3. Validate, normalize, and aggregate geography**
+- [x] **G3. Validate, normalize, and aggregate geography**
   - Preserve source identifiers and required fields; define units and missing handling.
   - Implement documented municipality aggregation without treating missing as zero.
   - Execute a targeted real-source verification when available and record actual counts; document access failure otherwise.
+  - _Verified 2026-10-24: `pytest backend/tests/geography -q` passed 19 tests (temporary host validation used Python 3.14/Pydantic 2.12.5 because project Python 3.11 was unavailable). Official client acquisition discovered `OBJECTID`; expected/fetched/unique accepted 2604/2604/2604, duplicates 0, quarantined 0, 27 pages, retries 0, complete; source missingness was `BG_MHHI` 19 and all other required fields 0; normalized 2604 records into 187 municipality EJ-subset aggregates._
   - _Requirements: R1, R2, R5_
 
 - [ ] **G4. Integrate agreed trial-site exchange and access indicators**
