@@ -82,7 +82,7 @@
       "data_classification": "public_aggregate_community_data",
       "official_url": "https://arcgisserver.digital.mass.gov/arcgisserver/rest/services/AGOL/EJ2020/MapServer/0/query?where=EJ%3D%27Yes%27&outFields=MUNICIPALITY,TOTAL_POP,PCT_MINORITY,LIMENGHHPCT,BG_MHHI,EJ,EJ_CRIT_DESC&returnGeometry=false&resultRecordCount=100&f=json",
       "expected_approximate_count": 2604,
-      "expected_count_is_verified": false,
+      "expected_count_is_verified": true,
       "pagination": {
         "required": true,
         "page_size": 100,
@@ -101,15 +101,35 @@
         "EJ_CRIT_DESC"
       ],
       "acquisition": {
-        "status": "not_acquired",
-        "acquired_at_utc": null,
-        "observed_record_count": null,
-        "accepted_record_count": null,
-        "duplicate_identifier_count": null,
-        "missing_value_counts": null,
-        "schema_valid": null,
+        "status": "complete",
+        "acquired_at_utc": "2026-10-24T18:41:31.739496Z",
+        "observed_record_count": 2604,
+        "accepted_record_count": 2604,
+        "duplicate_identifier_count": 0,
+        "missing_value_counts": {
+          "BG_MHHI": 19,
+          "EJ": 0,
+          "EJ_CRIT_DESC": 0,
+          "LIMENGHHPCT": 0,
+          "MUNICIPALITY": 0,
+          "PCT_MINORITY": 0,
+          "TOTAL_POP": 0
+        },
+        "schema_valid": true,
         "raw_sha256": null,
-        "filters_or_exclusions": []
+        "effective_query_url": "https://arcgisserver.digital.mass.gov/arcgisserver/rest/services/AGOL/EJ2020/MapServer/0/query?where=EJ%3D%27Yes%27&outFields=MUNICIPALITY%2CTOTAL_POP%2CPCT_MINORITY%2CLIMENGHHPCT%2CBG_MHHI%2CEJ%2CEJ_CRIT_DESC%2COBJECTID&returnGeometry=false&orderByFields=OBJECTID%20ASC&resultRecordCount=500&f=json",
+        "effective_page_size": 500,
+        "page_count": 6,
+        "pagination_completed": true,
+        "filters_or_exclusions": [
+          "where=EJ='Yes'",
+          "ordered by OBJECTID ascending",
+          "duplicate source IDs excluded after first occurrence",
+          "malformed records quarantined rather than fabricated",
+          "invalid_quarantined_count=0",
+          "retry_count=0",
+          "aggregated_into_187_municipality_ej_subsets"
+        ]
       }
     }
   ]

@@ -37,6 +37,12 @@ The query caps a page at 100 records. Complete ingestion must first inspect serv
 
 This dataset contains aggregate community attributes, not patient-level information.
 
+### Verified MassGIS acquisition — 2026-10-24
+
+The committed aggregate snapshot records a complete source run from `2026-10-24T18:41:29.924123Z` through `2026-10-24T18:41:31.739496Z`. The count query expected 2,604 records; six ordered pages fetched and accepted 2,604 unique `OBJECTID` records with zero duplicates, retries, partial failures, or quarantined rows. Missingness was 19 values for `BG_MHHI` and zero for every other required field. The records produced 187 municipality EJ-subset aggregates. No raw snapshot checksum is claimed because no immutable raw response bundle was retained.
+
+A separate geometry acquisition completed at `2026-10-24T18:26:42.761668Z`: 2,604 unique source features, zero missing/invalid geometries, polygon-centroid fallback for all features, and 187 resolved/zero unresolved municipality representative analytical points in EPSG:4326. These points are not verified outreach venues and may fall outside irregular boundaries.
+
 ## Required acquisition record
 
 Every ingestion run must record:
