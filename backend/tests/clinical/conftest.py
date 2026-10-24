@@ -27,6 +27,7 @@ def source_record_factory():
         status: str = "RECRUITING",
         conditions: list[str] | None = None,
         phases: list[str] | None = None,
+        source_description: str | None = "This official source text describes the synthetic study purpose.",
         eligibility: str | None = "Participants must be 18 years or older.",
         minimum_age: str | None = "18 Years",
         maximum_age: str | None = "65 Years",
@@ -54,6 +55,8 @@ def source_record_factory():
                 ],
             },
         }
+        if source_description is not None:
+            protocol["descriptionModule"] = {"briefSummary": source_description}
         if any(value is not None for value in (eligibility, minimum_age, maximum_age, sex)):
             protocol["eligibilityModule"] = {
                 key: value

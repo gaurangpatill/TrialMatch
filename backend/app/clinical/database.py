@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DetailRetrievalStatus, IngestionReport, StructuredCriterion, Study
+from .normalize import normalize_phase
 
 
 SCHEMA = """
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS studies (
     overall_status TEXT NOT NULL,
     conditions_json TEXT NOT NULL,
     phases_json TEXT NOT NULL,
+    source_description TEXT,
     eligibility_criteria TEXT,
     minimum_age TEXT,
     maximum_age TEXT,
@@ -94,6 +96,20 @@ CREATE TABLE IF NOT EXISTS extraction_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_extraction_attempts_current
 ON extraction_attempts(nct_id, source_hash, created_at);
+
+CREATE TABLE IF NOT EXISTS summary_cache (
+    cache_key TEXT PRIMARY KEY,
+    nct_id TEXT NOT NULL REFERENCES studies(nct_id) ON DELETE CASCADE,
+    source_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_summary_cache_current
+ON summary_cache(nct_id, source_hash, created_at);
 """
 
 
@@ -118,6 +134,23 @@ class ClinicalRepository:
             study_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(studies)")
             }
+            if "source_description" not in study_columns:
+                connection.execute("ALTER TABLE studies ADD COLUMN source_description TEXT")
+                for row in connection.execute("SELECT nct_id, raw_json FROM studies"):
+                    try:
+                        description = json.loads(row["raw_json"]).get("protocolSection", {}).get(
+                            "descriptionModule", {}
+                        )
+                        value = description.get("briefSummary") or description.get(
+                            "detailedDescription"
+                        )
+                        cleaned = value.strip() if isinstance(value, str) and value.strip() else None
+                    except (json.JSONDecodeError, AttributeError):
+                        cleaned = None
+                    connection.execute(
+                        "UPDATE studies SET source_description = ? WHERE nct_id = ?",
+                        (cleaned, row["nct_id"]),
+                    )
             if "detail_status" not in study_columns:
                 connection.execute(
                     "ALTER TABLE studies ADD COLUMN detail_status TEXT NOT NULL DEFAULT 'not_retrieved'"
@@ -175,6 +208,7 @@ class ClinicalRepository:
                 study.overall_status,
                 json.dumps(study.conditions),
                 json.dumps(study.phases),
+                study.source_description,
                 study.eligibility_criteria,
                 study.minimum_age,
                 study.maximum_age,
@@ -200,11 +234,11 @@ class ClinicalRepository:
             """
             INSERT INTO studies (
                 nct_id, title, overall_status, conditions_json, phases_json,
-                eligibility_criteria, minimum_age, maximum_age, sex,
+                source_description, eligibility_criteria, minimum_age, maximum_age, sex,
                 locations_json, contacts_json, source_url, retrieved_at,
                 source_hash, raw_json, detail_status, detail_attempted_at,
                 detail_error_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(nct_id) DO UPDATE SET
                 title=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
@@ -218,6 +252,9 @@ class ClinicalRepository:
                 phases_json=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
                            THEN studies.phases_json ELSE excluded.phases_json END,
+                source_description=CASE WHEN studies.detail_status = 'retrieved'
+                               AND excluded.detail_status != 'retrieved'
+                           THEN studies.source_description ELSE excluded.source_description END,
                 eligibility_criteria=CASE WHEN studies.detail_status = 'retrieved'
                                AND excluded.detail_status != 'retrieved'
                            THEN studies.eligibility_criteria ELSE excluded.eligibility_criteria END,
@@ -417,17 +454,14 @@ class ClinicalRepository:
                 study for study in studies if any(item.casefold() == needle for item in study.conditions)
             ]
         if phase:
-            needle = phase.strip().casefold()
-            studies = [study for study in studies if any(item.casefold() == needle for item in study.phases)]
-        if age_years is not None:
+            needle = normalize_phase(phase).casefold()
             studies = [
                 study
                 for study in studies
-                if (_age_to_years(study.minimum_age) is not None)
-                and (_age_to_years(study.maximum_age) is not None)
-                and age_years >= _age_to_years(study.minimum_age)  # type: ignore[operator]
-                and age_years <= _age_to_years(study.maximum_age)  # type: ignore[operator]
+                if any(normalize_phase(item).casefold() == needle for item in study.phases)
             ]
+        if age_years is not None:
+            studies = [study for study in studies if _age_matches(study, age_years)]
         if location:
             needle = location.strip().casefold()
             studies = [
@@ -749,6 +783,77 @@ class ClinicalRepository:
             ).fetchone()
         return ("stale", None, False, None) if stale else ("not_attempted", None, False, None)
 
+    def get_cached_summary(self, cache_key: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM summary_cache WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def get_current_summary(self, nct_id: str, source_hash: str) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM summary_cache
+                WHERE nct_id = ? AND source_hash = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (nct_id, source_hash),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        value = payload.get("plain_language_summary")
+        return value if isinstance(value, str) and value.strip() else None
+
+    def publish_summary(
+        self,
+        *,
+        cache_key: str,
+        nct_id: str,
+        source_hash: str,
+        provider: str,
+        model: str,
+        schema_version: str,
+        prompt_version: str,
+        payload: dict[str, Any],
+        created_at: datetime,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT source_hash FROM studies WHERE nct_id = ?", (nct_id,)
+            ).fetchone()
+            if current is None or current["source_hash"] != source_hash:
+                raise ValueError("cannot publish summary for a stale or missing study")
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO summary_cache (
+                    cache_key, nct_id, source_hash, provider, model,
+                    schema_version, prompt_version, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cache_key,
+                    nct_id,
+                    source_hash,
+                    provider,
+                    model,
+                    schema_version,
+                    prompt_version,
+                    json.dumps(payload, sort_keys=True),
+                    created_at.isoformat(),
+                ),
+            )
+            connection.execute(
+                "DELETE FROM summary_cache WHERE nct_id = ? AND cache_key != ?",
+                (nct_id, cache_key),
+            )
+            connection.commit()
+
     @staticmethod
     def _row_to_study(row: sqlite3.Row) -> Study:
         return Study.model_validate(
@@ -758,6 +863,7 @@ class ClinicalRepository:
                 "overall_status": row["overall_status"],
                 "conditions": json.loads(row["conditions_json"]),
                 "phases": json.loads(row["phases_json"]),
+                "source_description": row["source_description"],
                 "eligibility_criteria": row["eligibility_criteria"],
                 "minimum_age": row["minimum_age"],
                 "maximum_age": row["maximum_age"],
@@ -773,6 +879,16 @@ class ClinicalRepository:
                 "detail_error_code": row["detail_error_code"],
             }
         )
+
+
+def _age_matches(study: Study, age_years: float) -> bool:
+    minimum = _age_to_years(study.minimum_age)
+    maximum = _age_to_years(study.maximum_age)
+    if minimum is None and maximum is None:
+        return False
+    return (minimum is None or age_years >= minimum) and (
+        maximum is None or age_years <= maximum
+    )
 
 
 def _age_to_years(value: str | None) -> float | None:

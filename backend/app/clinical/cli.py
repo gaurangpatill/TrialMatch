@@ -12,6 +12,7 @@ from .database import ClinicalRepository
 from .extraction import EligibilityExtractor, ExtractionError, provider_from_environment
 from .ingestion import ClinicalIngestionService, update_manifest, write_report
 from .sites import build_site_export, write_site_export
+from .summaries import StudySummaryService, SummaryError, summary_provider_from_environment
 
 
 def parser() -> argparse.ArgumentParser:
@@ -34,6 +35,12 @@ def parser() -> argparse.ArgumentParser:
     extract = commands.add_parser("extract", help="extract criteria for detailed cached studies")
     extract.add_argument("--database", default="backend/data/trialmatch.sqlite3")
     extract.add_argument("--limit", type=int, default=20)
+
+    summarize = commands.add_parser(
+        "summarize", help="generate cached summaries for one to three explicit study IDs"
+    )
+    summarize.add_argument("--database", default="backend/data/trialmatch.sqlite3")
+    summarize.add_argument("--nct-id", action="append", dest="nct_ids", required=True)
 
     export_sites = commands.add_parser(
         "export-sites", help="export validated Massachusetts recruiting facilities"
@@ -109,6 +116,44 @@ async def run_extract(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+async def run_summarize(args: argparse.Namespace) -> int:
+    identifiers = list(dict.fromkeys(args.nct_ids))
+    if len(identifiers) != len(args.nct_ids):
+        print(json.dumps({"error": "--nct-id values must be unique"}))
+        return 2
+    if not 1 <= len(identifiers) <= 3:
+        print(json.dumps({"error": "summarize requires one to three explicit --nct-id values"}))
+        return 2
+    repository = ClinicalRepository(args.database)
+    studies = {study.nct_id: study for study in repository.get_studies(identifiers, limit=3)}
+    missing = [identifier for identifier in identifiers if identifier not in studies]
+    if missing:
+        print(json.dumps({"error": "unknown study IDs", "nct_ids": missing}, indent=2))
+        return 2
+    provider = summary_provider_from_environment()
+    service = StudySummaryService(repository, provider)
+    results: list[dict[str, object]] = []
+    failed = False
+    for identifier in identifiers:
+        study = studies[identifier]
+        try:
+            payload, from_cache = await service.summarize(study)
+            results.append(
+                {
+                    "nct_id": identifier,
+                    "from_cache": from_cache,
+                    "source_hash": payload.source_hash,
+                    "provider": provider.name,
+                    "model": provider.model,
+                }
+            )
+        except SummaryError as exc:
+            failed = True
+            results.append({"nct_id": identifier, "error": str(exc)})
+    print(json.dumps({"studies": results}, indent=2))
+    return 1 if failed else 0
+
+
 async def run_export_sites(args: argparse.Namespace) -> int:
     repository = ClinicalRepository(args.database)
     export = build_site_export(
@@ -137,6 +182,8 @@ async def async_main() -> int:
         return await run_ingest(args)
     if args.command == "extract":
         return await run_extract(args)
+    if args.command == "summarize":
+        return await run_summarize(args)
     if args.command == "export-sites":
         return await run_export_sites(args)
     raise AssertionError(f"unhandled command {args.command}")

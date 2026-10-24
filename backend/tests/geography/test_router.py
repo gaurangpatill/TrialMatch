@@ -13,7 +13,10 @@ from backend.app.geography.aggregate_snapshot import (
     save_aggregate_snapshot,
 )
 from backend.app.geography.router import (
+    FixedWindowRateLimiter,
+    GeographyAPIError,
     GeographyRuntime,
+    geography_api_error_handler,
     geography_router,
     get_geography_runtime,
 )
@@ -23,6 +26,7 @@ from backend.app.optimizer import OptimizationResult, optimize
 
 def client_for(runtime: GeographyRuntime) -> TestClient:
     app = FastAPI()
+    app.add_exception_handler(GeographyAPIError, geography_api_error_handler)
     app.include_router(geography_router)
     app.dependency_overrides[get_geography_runtime] = lambda: runtime
     return TestClient(app)
@@ -85,6 +89,12 @@ def test_unavailable_export_is_null_not_zero_and_filter_is_deterministic(client:
         "clinical_site_deduplicated_count",
         "clinical_site_quarantined_count",
         "clinical_site_source_record_count",
+        "clinical_site_export_input_record_count",
+        "clinical_site_producer_source_location_count",
+        "clinical_site_producer_explicit_massachusetts_location_count",
+        "clinical_site_producer_excluded_status_count",
+        "clinical_site_producer_excluded_missing_facility_count",
+        "clinical_site_producer_duplicate_record_count",
         "clinical_site_schema_accepted_count",
         "clinical_site_massachusetts_recruiting_retained_count",
         "clinical_site_retained_count",
@@ -118,7 +128,9 @@ def test_geo_query_validation(client: TestClient, params: dict[str, Any]) -> Non
 def test_condition_access_requires_export(client: TestClient) -> None:
     response = client.get("/api/geo", params={"condition": "Cancer"})
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "CLINICAL_SITE_EXPORT_UNAVAILABLE"
+    assert response.json()["error"]["code"] == "CLINICAL_SITE_EXPORT_UNAVAILABLE"
+    assert response.json()["error"]["retryable"] is False
+    assert response.json()["error"]["request_id"]
 
 
 def test_site_export_arrays_envelopes_aliases_statuses_and_bad_coordinates(tmp_path: Path) -> None:
@@ -240,6 +252,8 @@ def test_available_export_computes_access_and_reports_quarantine(tmp_path: Path)
     summary = payload["summary"]
     assert summary["clinical_site_data_available"] is True
     assert summary["clinical_site_source_record_count"] == 2
+    assert summary["clinical_site_export_input_record_count"] == 2
+    assert summary["clinical_site_producer_source_location_count"] is None
     assert summary["clinical_site_schema_accepted_count"] == 1
     assert summary["clinical_site_massachusetts_recruiting_retained_count"] == 1
     assert summary["clinical_site_retained_count"] == 1
@@ -389,6 +403,48 @@ def test_each_changed_request_invokes_solver_and_recomputes(unavailable_runtime:
     assert len({tuple(row["municipality_id"] for row in payload["selected_locations"]) for payload in payloads}) == 3
 
 
+def test_optimizer_rate_limit_blocks_solver_and_recovers(unavailable_runtime: GeographyRuntime) -> None:
+    now = [0.0]
+    calls = 0
+
+    def spy(scenario: Any) -> OptimizationResult:
+        nonlocal calls
+        calls += 1
+        return optimize(scenario)
+
+    runtime = GeographyRuntime(
+        site_export_path=unavailable_runtime.site_export_path,
+        optimizer=spy,
+        optimizer_rate_limiter=FixedWindowRateLimiter(
+            limit=2, window_seconds=60, clock=lambda: now[0]
+        ),
+    )
+    test_client = client_for(runtime)
+    body = {"max_events": 1, "coverage_radius_km": 25, "equity_weight": 0.5}
+    assert test_client.post("/api/optimize", json=body).status_code == 200
+    assert test_client.post("/api/optimize", json=body).status_code == 200
+    blocked = test_client.post("/api/optimize", json=body)
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert blocked.json()["error"]["retryable"] is True
+    assert blocked.headers["retry-after"] == "60"
+    assert calls == 2
+
+    now[0] = 61
+    assert test_client.post("/api/optimize", json=body).status_code == 200
+    assert calls == 3
+
+
+def test_geography_503_envelope_does_not_expose_local_path(tmp_path: Path) -> None:
+    missing = tmp_path / "private" / "missing.json"
+    response = client_for(GeographyRuntime(aggregate_snapshot_path=missing)).get("/api/geo")
+    assert response.status_code == 503
+    error = response.json()["error"]
+    assert error["code"] == "GEOGRAPHY_SNAPSHOT_UNAVAILABLE"
+    assert error["retryable"] is True
+    assert str(tmp_path) not in json.dumps(error)
+
+
 def test_condition_specific_optimization_fails_honestly_with_or_without_export(
     tmp_path: Path,
 ) -> None:
@@ -396,7 +452,7 @@ def test_condition_specific_optimization_fails_honestly_with_or_without_export(
     body = {"max_events": 1, "coverage_radius_km": 25, "equity_weight": 0.5, "condition": "Cancer"}
     unavailable = missing.post("/api/optimize", json=body)
     assert unavailable.status_code == 409
-    assert unavailable.json()["detail"]["code"] == "CLINICAL_SITE_EXPORT_UNAVAILABLE"
+    assert unavailable.json()["error"]["code"] == "CLINICAL_SITE_EXPORT_UNAVAILABLE"
 
     path = tmp_path / "sites.json"
     path.write_text("[]", encoding="utf-8")
@@ -404,8 +460,8 @@ def test_condition_specific_optimization_fails_honestly_with_or_without_export(
         "/api/optimize", json=body
     )
     assert available.status_code == 409
-    assert available.json()["detail"]["code"] == "CONDITION_SPECIFIC_OPTIMIZATION_UNSUPPORTED"
-    assert "no validated condition-specific access-gap term" in available.json()["detail"]["message"]
+    assert available.json()["error"]["code"] == "CONDITION_SPECIFIC_OPTIMIZATION_UNSUPPORTED"
+    assert "no validated condition-specific access-gap term" in available.json()["error"]["message"]
 
 
 def test_official_aggregate_snapshot_is_complete_aligned_and_atomically_reloadable(tmp_path: Path) -> None:
@@ -659,6 +715,12 @@ def test_real_export_loader_and_condition_geo_integration() -> None:
     )
     summary = payload["summary"]
     assert summary["clinical_site_source_record_count"] == 149
+    assert summary["clinical_site_export_input_record_count"] == 149
+    assert summary["clinical_site_producer_source_location_count"] == 11126
+    assert summary["clinical_site_producer_explicit_massachusetts_location_count"] == 195
+    assert summary["clinical_site_producer_excluded_status_count"] == 46
+    assert summary["clinical_site_producer_excluded_missing_facility_count"] == 0
+    assert summary["clinical_site_producer_duplicate_record_count"] == 0
     assert summary["clinical_site_schema_accepted_count"] == 149
     assert summary["clinical_site_massachusetts_recruiting_retained_count"] == 149
     assert summary["clinical_site_retained_count"] == len(site_features)
