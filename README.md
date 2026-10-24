@@ -36,7 +36,7 @@ TrialMatch/
 
 See [architecture](docs/architecture.md), [API contracts](contracts/api.md), and [agent ownership](AGENTS.md).
 
-## Agreed stack
+## Tech stack
 
 - Frontend: Next.js, TypeScript, Tailwind CSS, MapLibre GL JS
 - Backend: Python 3.11, FastAPI, Pydantic
@@ -110,10 +110,6 @@ git switch -c feature/clinical-intelligence   # Developer A
 ```
 
 Internal feature freeze is **October 24, 2026 at 6:30 PM Eastern**. The detailed sprint schedule is in [docs/sprints.md](docs/sprints.md).
-
-## Hackathon compliance
-
-The repository keeps root `.kiro/` content under version control and documents real Kiro usage in [docs/kiro-usage.md]. A final submission still requires a public repository, accessible working demo/test build, sub-three-minute video, accurate feature description, reproducibility verification, and third-party license/privacy/IP review.
 
 ## Documentation
 
