@@ -17,9 +17,10 @@ from backend.app.geography.models import (
     ArcGISQueryEnvelope, ArcGISSpatialReference, MunicipalityEJSubsetAggregate,
     MunicipalityRepresentativePoint, TrialSite,
 )
+from backend.app.geography.router import _selected_locations_with_explanations
 from backend.app.geography.scenario import build_real_ej_scenario
 from backend.app.geography.sites import adapt_trial_sites
-from backend.app.optimizer import optimize
+from backend.app.optimizer import CandidateLocation, DemandCommunity, OptimizationScenario, optimize
 
 
 def polygon(x: float, y: float) -> dict[str, Any]:
@@ -216,3 +217,73 @@ def test_unresolved_municipality_is_explicitly_unavailable_for_spatial_access() 
     assert result.spatial_analysis_available is False
     assert result.nearest_resolved_recruiting_site_distance_km is None
     assert result.distinct_nearby_nct_count == 0
+
+
+def test_selected_location_explanations_use_union_overlap_and_fixed_plan_loss() -> None:
+    located = {
+        "latitude": 42.0,
+        "coordinate_source": "synthetic_test_fixture",
+        "coordinate_source_reference": "known-overlap-test",
+    }
+    scenario = OptimizationScenario(
+        candidates=(
+            CandidateLocation(
+                candidate_id="A", longitude=0.0, event_cost=1.0,
+                cost_unit="abstract_equal_event_units", **located,
+            ),
+            CandidateLocation(
+                candidate_id="B", longitude=0.2, event_cost=1.0,
+                cost_unit="abstract_equal_event_units", **located,
+            ),
+        ),
+        communities=(
+            DemandCommunity(
+                community_id="Only A", longitude=-0.1,
+                ej_subset_population_proxy=100, equity_priority=0.2, **located,
+            ),
+            DemandCommunity(
+                community_id="Shared", longitude=0.1,
+                ej_subset_population_proxy=200, equity_priority=0.5, **located,
+            ),
+            DemandCommunity(
+                community_id="Only B", longitude=0.3,
+                ej_subset_population_proxy=300, equity_priority=0.8, **located,
+            ),
+        ),
+        budget=2.0,
+        max_events=2,
+        coverage_radius_km=20.0,
+        equity_weight_lambda=0.5,
+        cost_unit="abstract_equal_event_units",
+    )
+
+    selected = _selected_locations_with_explanations(
+        scenario,
+        ("A", "B"),
+        (aggregate("A", 10, 5), aggregate("B", 20, 15)),
+    )
+    by_id = {location.municipality_id: location.explanation for location in selected}
+
+    assert by_id["A"].raw_catchment_community_ids == ("Only A", "Shared")
+    assert by_id["A"].raw_catchment_community_count == 2
+    assert by_id["A"].raw_catchment_ej_subset_population_proxy == 300
+    assert by_id["A"].raw_catchment_objective == pytest.approx(210)
+    assert by_id["A"].uniquely_covered_community_ids == ("Only A",)
+    assert by_id["A"].uniquely_covered_ej_subset_population_proxy == 100
+    assert by_id["A"].uniquely_covered_objective == pytest.approx(60)
+    assert by_id["A"].leave_one_out_objective_loss == pytest.approx(60)
+
+    assert by_id["B"].raw_catchment_community_ids == ("Only B", "Shared")
+    assert by_id["B"].raw_catchment_ej_subset_population_proxy == 500
+    assert by_id["B"].raw_catchment_objective == pytest.approx(420)
+    assert by_id["B"].uniquely_covered_community_ids == ("Only B",)
+    assert by_id["B"].uniquely_covered_ej_subset_population_proxy == 300
+    assert by_id["B"].uniquely_covered_objective == pytest.approx(270)
+    assert by_id["B"].leave_one_out_objective_loss == pytest.approx(270)
+
+    # Shared coverage is present in both raw catchments but in neither unique/removal loss.
+    assert sum(value.raw_catchment_objective for value in by_id.values()) == pytest.approx(630)
+    assert sum(value.uniquely_covered_objective for value in by_id.values()) == pytest.approx(330)
+    assert "not causal impact" in by_id["A"].leave_one_out_interpretation
+    assert by_id["A"].selected_municipality_ej_subset_population == 10
+    assert by_id["B"].selected_municipality_limited_english_household_percent_ej_subset == 15

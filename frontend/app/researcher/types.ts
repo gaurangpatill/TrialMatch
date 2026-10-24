@@ -1,3 +1,5 @@
+export type PointGeometry = {type: "Point"; coordinates: [number, number]};
+
 export type GeoProperties = {
   municipality: string;
   source_scope: string;
@@ -20,8 +22,33 @@ export type GeoProperties = {
 export type GeoFeature = {
   type: "Feature";
   id: string;
-  geometry: {type: "Point"; coordinates: [number, number]} | null;
+  geometry: PointGeometry | null;
   properties: GeoProperties;
+};
+
+export type RecruitingSiteProperties = {
+  nct_id: string;
+  facility: string;
+  facility_source_id: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  conditions: string[];
+  recruiting_status: string | null;
+  coordinate_source: string | null;
+  coordinate_source_reference: string | null;
+  coordinate_resolution_status: "source_coordinates" | "verified_geocode" | "unresolved";
+  source_url: string | null;
+  retrieved_at: string | null;
+  coordinate_approximation_warning: string;
+};
+
+export type RecruitingSiteFeature = {
+  type: "Feature";
+  id: string;
+  geometry: PointGeometry | null;
+  properties: RecruitingSiteProperties;
 };
 
 export type GeoSummary = {
@@ -40,11 +67,28 @@ export type GeoSummary = {
   clinical_site_unresolved_count: number | null;
   clinical_site_deduplicated_count: number | null;
   clinical_site_quarantined_count: number | null;
+  clinical_site_source_record_count: number | null;
+  clinical_site_schema_accepted_count: number | null;
+  clinical_site_massachusetts_recruiting_retained_count: number | null;
+  clinical_site_retained_count: number | null;
+  clinical_site_distinct_nct_count: number | null;
+  clinical_site_duplicate_removed_count: number | null;
+  clinical_site_unique_facility_location_count: number | null;
+  clinical_site_source_location_count: number | null;
+  clinical_site_source_snapshot_study_count: number | null;
+  clinical_site_expanded_study_count: number | null;
+  clinical_site_exported_study_count: number | null;
+  clinical_site_export_generated_at: string | null;
+  clinical_site_export_scope: string | null;
+  clinical_site_export_limitations: string[] | null;
+  clinical_site_coordinate_precision_limitation: string | null;
 };
 
 export type GeoCollection = {
   type: "FeatureCollection";
   features: GeoFeature[];
+  recruiting_site_features: RecruitingSiteFeature[];
+  available_conditions: string[] | null;
   summary: GeoSummary;
 };
 
@@ -69,9 +113,32 @@ export type BaselineResult = {
   constraint_satisfaction: ConstraintSatisfaction;
 };
 
+export type SelectedLocationExplanation = {
+  raw_catchment_community_ids: string[];
+  raw_catchment_community_count: number;
+  raw_catchment_ej_subset_population_proxy: number;
+  raw_catchment_objective: number;
+  uniquely_covered_community_ids: string[];
+  uniquely_covered_community_count: number;
+  uniquely_covered_ej_subset_population_proxy: number;
+  uniquely_covered_objective: number;
+  leave_one_out_objective_loss: number;
+  leave_one_out_interpretation: "fixed-plan removal loss; other selected locations remain fixed; not causal impact or reoptimized marginal value";
+  selected_municipality_ej_subset_population: number;
+  selected_municipality_limited_english_household_percent_ej_subset: number;
+  selected_municipality_percent_minority_ej_subset: number | null;
+};
+
+export type SelectedLocation = {
+  municipality_id: string;
+  latitude: number;
+  longitude: number;
+  explanation: SelectedLocationExplanation;
+};
+
 export type OptimizeResponse = {
   status: "optimal" | "feasible" | "infeasible" | "unbounded" | "solver_error";
-  selected_locations: Array<{municipality_id: string; latitude: number; longitude: number}>;
+  selected_locations: SelectedLocation[];
   covered_municipality_ids: string[];
   covered_municipality_count: number;
   modeled_outreach_coverage_objective: number;

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import math
+import os
 import re
 import unicodedata
 from collections.abc import Iterable
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal
 
-from .models import SiteAdapterReport, SiteAdapterResult, TrialSite
+from pydantic import Field, model_validator
+
+from .models import SiteAdapterReport, SiteAdapterResult, StrictModel, TrialSite
 
 _MA = {"ma", "massachusetts"}
 
@@ -48,6 +56,37 @@ def matches_condition(site: TrialSite, condition: str | None) -> bool:
     return any(_normalize(value) == target for value in site.conditions)
 
 
+def available_site_conditions(sites: Iterable[TrialSite]) -> tuple[str, ...]:
+    """Return deterministic display labels unique under exact-match normalization."""
+
+    labels: dict[str, str] = {}
+    for site in sites:
+        for condition in site.conditions:
+            normalized = _normalize(condition)
+            if normalized:
+                display = " ".join(condition.split())
+                labels[normalized] = min(labels.get(normalized, display), display)
+    return tuple(labels[key] for key in sorted(labels))
+
+
+def unique_facility_location_count(sites: Iterable[TrialSite]) -> int:
+    """Count physical-location labels without conflating repeated study records."""
+
+    keys = {
+        (
+            _normalize(site.facility_name),
+            _normalize(site.city),
+            _normalize(site.state),
+            _normalize(site.postal_code),
+            _normalize(site.country),
+            "" if site.latitude is None else f"{site.latitude:.8f}",
+            "" if site.longitude is None else f"{site.longitude:.8f}",
+        )
+        for site in sites
+    }
+    return len(keys)
+
+
 def adapt_trial_sites(sites: Iterable[TrialSite], *, condition: str | None = None) -> SiteAdapterResult:
     input_sites = tuple(sites)
     in_state = [site for site in input_sites if is_massachusetts_site(site)]
@@ -72,26 +111,55 @@ def adapt_trial_sites(sites: Iterable[TrialSite], *, condition: str | None = Non
 
 # The clinical workstream owns export production. This adapter deliberately accepts
 # only the agreed exchange fields and never imports clinical implementation code.
-import json
-import math
-import os
-from pathlib import Path
-from typing import Any
-
-from pydantic import Field
-
-from .models import StrictModel
-
 DEFAULT_SITE_EXPORT_PATH = Path("backend/data/exports/ma_trial_sites.json")
+
+
+class SiteExportMetadata(StrictModel):
+    """Versioned clinical-export provenance retained at the geography boundary."""
+
+    schema_version: Literal["trialmatch_ma_trial_sites_v1"]
+    generated_at: datetime
+    cohort_selection: str
+    source: str
+    source_snapshot_study_count: int = Field(ge=0)
+    expanded_study_count: int = Field(ge=0)
+    expanded_studies_with_ma_recruiting_sites: int = Field(ge=0)
+    source_location_count: int = Field(ge=0)
+    explicit_massachusetts_location_count: int = Field(ge=0)
+    excluded_non_recruiting_or_unknown_site_status_count: int = Field(ge=0)
+    excluded_missing_facility_name_count: int = Field(ge=0)
+    duplicate_record_count: int = Field(ge=0)
+    exported_record_count: int = Field(ge=0)
+    exported_study_count: int = Field(ge=0)
+    unique_facility_location_count: int = Field(ge=0)
+    resolved_coordinate_count: int = Field(ge=0)
+    unresolved_coordinate_count: int = Field(ge=0)
+    invalid_source_coordinate_count: int = Field(ge=0)
+    earliest_retrieved_at: datetime
+    latest_retrieved_at: datetime
+    deduplication_key: str
+    limitations: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def counts_reconcile(self) -> "SiteExportMetadata":
+        if self.resolved_coordinate_count + self.unresolved_coordinate_count != self.exported_record_count:
+            raise ValueError("exported count must reconcile resolved and unresolved coordinates")
+        if self.exported_study_count > self.exported_record_count:
+            raise ValueError("exported study count cannot exceed exported record count")
+        if self.latest_retrieved_at < self.earliest_retrieved_at:
+            raise ValueError("latest retrieval must not precede earliest retrieval")
+        return self
 
 
 class SiteExportReport(StrictModel):
     path: str
     available: bool
+    record_collection: Literal["array", "geography_records", "records", "items", "sites"] | None = None
     input_count: int | None = Field(default=None, ge=0)
     accepted_count: int | None = Field(default=None, ge=0)
     quarantined_count: int | None = Field(default=None, ge=0)
     quarantine_reasons: tuple[str, ...] = ()
+    metadata: SiteExportMetadata | None = None
 
 
 class SiteExportResult(StrictModel):
@@ -108,6 +176,7 @@ def _normalized_coordinate_status(value: Any, has_coordinates: bool) -> str:
         return "source_coordinates" if has_coordinates else "unresolved"
     normalized = re.sub(r"[^a-z]+", "_", str(value).strip().casefold()).strip("_")
     aliases = {
+        "verified": "source_coordinates",
         "source": "source_coordinates",
         "provided": "source_coordinates",
         "resolved": "source_coordinates",
@@ -132,17 +201,37 @@ def _normalized_recruiting_status(value: Any) -> str | None:
     return normalized.upper() or None
 
 
-def _export_records(payload: Any) -> list[Any]:
+def _export_records(
+    payload: Any,
+) -> tuple[list[Any], Literal["array", "geography_records", "records", "items", "sites"], SiteExportMetadata | None]:
     if isinstance(payload, list):
-        return payload
+        return payload, "array", None
     if isinstance(payload, dict):
-        for key in ("records", "items", "sites"):
+        metadata_value = payload.get("metadata")
+        metadata = (
+            SiteExportMetadata.model_validate(metadata_value)
+            if metadata_value is not None
+            else None
+        )
+        for key in ("geography_records", "records", "items", "sites"):
             if key in payload:
                 records = payload[key]
                 if not isinstance(records, list):
                     raise ValueError(f"clinical site export {key!r} must be an array")
-                return records
-    raise ValueError("clinical site export must be an array or records/items/sites envelope")
+                if key == "geography_records" and "records" in payload:
+                    full_records = payload["records"]
+                    if not isinstance(full_records, list):
+                        raise ValueError("clinical site export 'records' must be an array")
+                    if len(full_records) != len(records):
+                        raise ValueError("records and geography_records counts must match")
+                if metadata is not None and metadata.exported_record_count != len(records):
+                    raise ValueError(
+                        "metadata exported_record_count must match selected record collection"
+                    )
+                return records, key, metadata
+    raise ValueError(
+        "clinical site export must be an array or geography_records/records/items/sites envelope"
+    )
 
 
 def _trial_site_from_export(record: Any, *, source_reference: str) -> TrialSite:
@@ -221,7 +310,7 @@ def load_trial_site_export(path: str | Path | None = None) -> SiteExportResult:
             sites=(), report=SiteExportReport(path=str(source), available=False)
         )
     payload = json.loads(source.read_text(encoding="utf-8"))
-    records = _export_records(payload)
+    records, record_collection, metadata = _export_records(payload)
     accepted: list[TrialSite] = []
     reasons: list[str] = []
     for index, record in enumerate(records):
@@ -234,9 +323,11 @@ def load_trial_site_export(path: str | Path | None = None) -> SiteExportResult:
         report=SiteExportReport(
             path=str(source),
             available=True,
+            record_collection=record_collection,
             input_count=len(records),
             accepted_count=len(accepted),
             quarantined_count=len(reasons),
             quarantine_reasons=tuple(reasons),
+            metadata=metadata,
         ),
     )
