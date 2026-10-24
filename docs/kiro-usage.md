@@ -19,6 +19,7 @@ These artifacts establish spec-driven development; they do not prove that future
 | 2026-10-24 | Clinical Intelligence | Spec-guided implementation and verification | Tasks C1–C9 complete; 81-test pytest suite including Hypothesis, extraction-coverage, cache, and site-export properties; live LLM run blocked |
 | 2026-10-24 | Patient Portal | Frontend contract and safety verification | 6 Vitest proxy tests, TypeScript check, production build, and zero-vulnerability npm audit |
 | 2026-10-24 | Clinical Intelligence | Context gathering and semantic review | Branch/spec audit followed by confirmed safety-boundary fixes before final commit |
+| 2026-10-24 | Final release coordination | Kiro context gathering, steering/spec review, isolated worktrees, and finite verification | CI/release worktree: Python compileall passed; 203 backend tests passed with one guarded skip; 7 frontend tests, TypeScript, and Next.js production build passed; G10 and deployment runbooks updated |
 
 ## Optional capabilities
 

@@ -62,11 +62,13 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - _Verified 2026-10-24 with Node 22.14.0: `npm run typecheck` passed and Next.js 16.4.3 `npm run build` compiled `/researcher` successfully. A production server smoke request returned the researcher route with its controls. The route loads real `/api/geo` data and each Run action sends current event/radius/equity controls to `/api/optimize`; backend tests verify each changed request invokes a fresh solver run. Clinical conditions remain disabled while the genuine site export is unavailable._
   - _Requirements: R3, R5_
 
-- [ ] **G10. Workstream verification and handoff**
+- [x] **G10. Workstream verification and handoff**
   - Run complete geographic/optimizer pytest suites and frontend checks; record exact commands/results.
   - Reconcile observed source counts and provenance; distinguish fixtures from actual records.
   - Update limitations and Kiro usage with facts only.
   - Commit stable checkpoint and communicate site exchange/API behavior to integration owners.
+  - _Final release verification on 2026-10-24: Python 3.11 compileall passed; the complete backend suite passed 203 tests with one explicitly guarded real-export test skipped because its temporary export was unavailable. Frontend Vitest passed 7 tests, TypeScript checking passed, and the Next.js 16.4.3 production build compiled both `/patient` and `/researcher`. The committed MassGIS evidence was reconciled in the manifest: 2,604 expected/fetched/unique accepted records, zero duplicates/retries/quarantines, 19 missing `BG_MHHI` values, six pages, and 187 municipality aggregates/representative points. Deployment configuration and runbooks were validated locally but Railway/Vercel were not deployed or smoke-tested._
+  - _Handoff: `/api/geo` exposes condition-filtered access indicators from the versioned partial clinical-site export; `/api/optimize` remains condition-independent and reports modeled coverage only. Municipality representative points are analytical points, not venues. Production uses same-origin Vercel routing to the FastAPI service. A persistent clinical SQLite volume must be populated and checked separately because generated databases are not committed._
   - _Requirements: R1–R5_
 
 ## Completion gate

@@ -10,7 +10,7 @@ TrialMatch is a Hackachusetts 2026 Healthcare & Biotech (H5) research-access pro
 - **Researcher Dashboard:** Explore Massachusetts trial-site distribution and aggregate Environmental Justice indicators.
 - **Recruitment Optimizer:** Select modeled outreach locations under explicit resource constraints. Outputs estimate modeled coverage, not observed enrollment outcomes.
 
-No clinical or geographic feature engine is implemented on `main`; this branch contains the shared scaffold and common contracts only.
+The integrated application includes the clinical discovery/screening API, persisted Massachusetts geography, a condition-independent SciPy MILP outreach optimizer, the Patient Portal, and the researcher dashboard. Deployment still requires a populated persistent clinical SQLite volume; process health alone does not establish data readiness.
 
 ## Architecture
 
@@ -73,11 +73,18 @@ The shared health check is `GET http://localhost:8000/api/health`.
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Environment variables are documented in `.env.example`. Copy it to `.env` or the framework-specific local environment file; never commit populated secrets.
+Environment variables are documented in `.env.example`. Copy it to `.env` or the framework-specific local environment file; never commit populated secrets. `TRIALMATCH_API_BASE_URL` is server-only and preferred for production; `NEXT_PUBLIC_API_BASE_URL` is browser-visible and intended only for local/direct-browser development.
+
+## Deployment and release
+
+- [Railway FastAPI and Vercel Next.js deployment](docs/deployment.md)
+- [End-to-end demo/release checklist](docs/release-checklist.md)
+
+Railway must use one process and a persistent `/data` volume. The ignored clinical SQLite database is populated by an explicit one-off ingestion command; it is never generated during application startup or committed. Vercel uses same-origin proxying for clinical, geography, and optimizer requests. CI runs the complete backend suite plus frontend tests, typecheck, and production build from clean dependency installs.
 
 ## Validation
 
@@ -110,6 +117,8 @@ The repository keeps root `.kiro/` content under version control and documents r
 
 ## Documentation
 
+- [Deployment](docs/deployment.md)
+- [Release checklist](docs/release-checklist.md)
 - [Architecture](docs/architecture.md)
 - [Data provenance and validation](docs/data-provenance.md)
 - [API contracts](contracts/api.md)
