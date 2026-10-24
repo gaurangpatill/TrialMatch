@@ -95,6 +95,11 @@ async def run_extract(args: argparse.Namespace) -> int:
                     "verification_method": verification_method,
                     "provider": provider.name,
                     "model": provider.model,
+                    "token_usage": (
+                        getattr(provider, "last_usage").model_dump()
+                        if not from_cache and getattr(provider, "last_usage", None)
+                        else None
+                    ),
                 }
             )
         except ExtractionError as exc:

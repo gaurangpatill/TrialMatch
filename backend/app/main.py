@@ -1,15 +1,17 @@
-"""Shared FastAPI composition root with coordinated clinical router registration."""
+"""Shared FastAPI composition root for clinical and geographic routes."""
 
 import uuid
 from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from backend.app.clinical.models import ErrorBody, ErrorDetail, ErrorResponse
 from backend.app.clinical.router import router as clinical_router
+from backend.app.geography.router import geography_router
 
 
 class HealthResponse(BaseModel):
@@ -26,6 +28,14 @@ app = FastAPI(
     title="TrialMatch API",
     description="Source-grounded TrialMatch research-access prototype API.",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
@@ -61,3 +71,4 @@ def health() -> HealthResponse:
 
 
 app.include_router(clinical_router)
+app.include_router(geography_router)

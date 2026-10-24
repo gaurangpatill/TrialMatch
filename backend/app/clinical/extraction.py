@@ -11,14 +11,14 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .database import ClinicalRepository
 from .models import CriterionOperator, ExtractionPayload, StructuredCriterion, Study
 
 
-SCHEMA_VERSION = "2.0"
-PROMPT_VERSION = "2.0"
+SCHEMA_VERSION = "2.1"
+PROMPT_VERSION = "2.1"
 
 
 class ExtractionError(RuntimeError):
@@ -30,7 +30,61 @@ class ProviderUnavailable(ExtractionError):
 
 
 class InvalidExtraction(ExtractionError):
-    pass
+    def __init__(self, message: str, feedback: list[dict[str, str]] | None = None):
+        super().__init__(message)
+        self.feedback = feedback or []
+
+
+class TokenUsage(BaseModel):
+    """Sanitized token counters from one provider request."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+
+
+_UNSUPPORTED_PROVIDER_SCHEMA_KEYS = {
+    "default",
+    "title",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minItems",
+    "maxItems",
+}
+
+
+def openai_strict_schema() -> dict[str, Any]:
+    """Convert Pydantic JSON Schema to OpenAI's strict supported subset."""
+
+    schema = ExtractionPayload.model_json_schema()
+
+    def normalize(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                normalize(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for key in _UNSUPPORTED_PROVIDER_SCHEMA_KEYS:
+            node.pop(key, None)
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            node["required"] = list(properties)
+            node["additionalProperties"] = False
+        for value in node.values():
+            normalize(value)
+
+    normalize(schema)
+    return schema
 
 
 class LLMProvider(Protocol):
@@ -77,8 +131,30 @@ class OpenAICompatibleProvider:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._client = http_client
+        self.last_usage: TokenUsage | None = None
 
     async def extract(self, study: Study) -> dict[str, Any]:
+        self.last_usage = None
+        return await self._request(study)
+
+    async def repair(
+        self,
+        study: Study,
+        invalid_payload: dict[str, Any],
+        feedback: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Perform one bounded structured repair using sanitized validator feedback."""
+
+        return await self._request(
+            study,
+            repair_context={"invalid_payload": invalid_payload, "validation_errors": feedback},
+        )
+
+    async def _request(
+        self,
+        study: Study,
+        repair_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not study.eligibility_criteria:
             raise ExtractionError(f"{study.nct_id} has no detailed eligibility text")
         body = {
@@ -89,57 +165,142 @@ class OpenAICompatibleProvider:
                 "json_schema": {
                     "name": "trialmatch_eligibility",
                     "strict": True,
-                    "schema": ExtractionPayload.model_json_schema(),
+                    "schema": openai_strict_schema(),
                 },
             },
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Segment and account for every atomic inclusion or exclusion protocol item. "
-                        "Copy every original_text verbatim. Put representable and unsupported items "
-                        "in criteria; put unprocessed items in coverage.uncovered_items with a reason. "
-                        "Declare complete only when every protocol item is accounted for and none is "
-                        "uncovered. Do not decide patient eligibility or invent criteria."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "nct_id": study.nct_id,
-                            "source_url": study.source_url,
-                            "eligibility_criteria": study.eligibility_criteria,
-                            "source_items": [
-                                {"source_item_id": item_id, "original_text": text}
-                                for item_id, (text, _) in _protocol_items(
-                                    study.eligibility_criteria
-                                ).items()
-                            ],
-                        }
-                    ),
-                },
-            ],
+            "messages": self._messages(study, repair_context),
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
         try:
-            response = await client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
-            response.raise_for_status()
+            response = await client.post(
+                f"{self.base_url}/chat/completions", json=body, headers=headers
+            )
+            if response.status_code >= 400:
+                raise self._sanitized_http_error(response)
             envelope = response.json()
-            content = envelope["choices"][0]["message"]["content"]
+            usage = envelope.get("usage")
+            if isinstance(usage, dict):
+                request_usage = TokenUsage.model_validate(usage)
+                if self.last_usage is None:
+                    self.last_usage = request_usage
+                else:
+                    self.last_usage = TokenUsage(
+                        prompt_tokens=self.last_usage.prompt_tokens + request_usage.prompt_tokens,
+                        completion_tokens=(
+                            self.last_usage.completion_tokens + request_usage.completion_tokens
+                        ),
+                        total_tokens=self.last_usage.total_tokens + request_usage.total_tokens,
+                    )
+            choice = envelope["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            message = choice["message"]
+            if message.get("refusal"):
+                raise ProviderUnavailable("OpenAI refused the structured extraction request")
+            if finish_reason not in {None, "stop"}:
+                raise ProviderUnavailable(
+                    f"OpenAI structured extraction ended with finish_reason={finish_reason!r}"
+                )
+            content = message["content"]
             if not isinstance(content, str):
                 raise TypeError("provider message content must be a JSON string")
             payload = json.loads(content)
             if not isinstance(payload, dict):
                 raise TypeError("provider JSON must be an object")
             return payload
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise ProviderUnavailable(f"LLM provider request failed: {type(exc).__name__}: {exc}") from exc
+        except ProviderUnavailable:
+            raise
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            safe_message = str(exc).replace(self.api_key, "[REDACTED]")
+            raise ProviderUnavailable(
+                f"LLM provider response failed validation: {type(exc).__name__}: {safe_message[:500]}"
+            ) from exc
         finally:
             if owns_client:
                 await client.aclose()
+
+    def _messages(
+        self,
+        study: Study,
+        repair_context: dict[str, Any] | None,
+    ) -> list[dict[str, str]]:
+        system_prompt = (
+            "Extract structured eligibility rules without deciding eligibility. Account for every "
+            "provided source_item_id and copy original_text verbatim. Use uncovered_items when an "
+            "item is not processed. Return every schema property; use null for inapplicable scalar "
+            "fields and [] for children/uncovered_items. Valid predicate combinations: "
+            "age_years uses equals/not_equals/greater_than/greater_than_or_equal/less_than/"
+            "less_than_or_equal with numeric value, or between with lower+upper; target is null. "
+            "sex uses equals/not_equals with string value; target is null. condition, medication, "
+            "and procedure use only present/absent/within_days and require target; value, bounds, "
+            "and unit are null; within_days also requires temporal_window_days. laboratory_value "
+            "uses a numeric comparison, requires target and unit. all/any compounds use attribute "
+            "unsupported as a container, null scalar fields, and at least two valid children. If a "
+            "clinical concept cannot be represented safely, use attribute=unsupported and "
+            "operator=unsupported with all scalar fields null and children=[]. Invalid: condition "
+            "+ equals; condition + present with target=null; condition name placed in value; all/any "
+            "with condition children lacking targets. Never guess a target, unit, duration, or fact."
+        )
+        source = {
+            "nct_id": study.nct_id,
+            "source_url": study.source_url,
+            "eligibility_criteria": study.eligibility_criteria,
+            "source_items": [
+                {"source_item_id": item_id, "original_text": text}
+                for item_id, (text, _) in _protocol_items(
+                    study.eligibility_criteria or ""
+                ).items()
+            ],
+        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(source)},
+        ]
+        if repair_context is not None:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Repair the prior structured output using only these sanitized Pydantic "
+                        "validation errors. Preserve every source_item_id and verbatim original_text. "
+                        "Replace any unsafe or unrepresentable predicate with the explicit unsupported "
+                        "predicate; do not guess.\n"
+                        + json.dumps(repair_context)
+                    ),
+                }
+            )
+        return messages
+
+    def _sanitized_http_error(self, response: httpx.Response) -> ProviderUnavailable:
+        error_type: str | None = None
+        error_code: str | None = None
+        error_param: str | None = None
+        message = "Request rejected by provider."
+        try:
+            payload = response.json()
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict):
+                error_type = _safe_error_value(error.get("type"))
+                error_code = _safe_error_value(error.get("code"))
+                error_param = _safe_error_value(error.get("param"))
+                message = _safe_error_value(error.get("message")) or message
+        except (ValueError, TypeError):
+            pass
+        message = message.replace(self.api_key, "[REDACTED]")[:800]
+        return ProviderUnavailable(
+            "OpenAI API request failed "
+            f"(status={response.status_code}, type={error_type}, code={error_code}, "
+            f"param={error_param}): {message}"
+        )
+
+
+def _safe_error_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)[:800]
+    return None
 
 
 def _protocol_items(eligibility_text: str) -> dict[str, tuple[str, int]]:
@@ -221,7 +382,14 @@ class EligibilityExtractor:
 
         try:
             raw_payload = await self.provider.extract(study)
-            payload = self._validate_payload(study, raw_payload)
+            try:
+                payload = self._validate_payload(study, raw_payload)
+            except InvalidExtraction as first_error:
+                repair = getattr(self.provider, "repair", None)
+                if not callable(repair) or not first_error.feedback:
+                    raise
+                repaired_payload = await repair(study, raw_payload, first_error.feedback)
+                payload = self._validate_payload(study, repaired_payload)
             criteria = self._materialize(study, payload)
             self._publish(study, key, payload, criteria)
             return criteria, False
@@ -283,7 +451,22 @@ class EligibilityExtractor:
                 json.dumps(raw_payload), strict=True
             )
         except ValidationError as exc:
-            raise InvalidExtraction(f"provider output failed schema validation: {exc}") from exc
+            feedback = [
+                {
+                    "path": ".".join(str(part) for part in error["loc"]),
+                    "type": str(error["type"]),
+                    "message": str(error["msg"])[:300],
+                }
+                for error in exc.errors(
+                    include_url=False,
+                    include_context=False,
+                    include_input=False,
+                )[:20]
+            ]
+            raise InvalidExtraction(
+                "provider output failed schema validation: " + json.dumps(feedback),
+                feedback=feedback,
+            ) from exc
         if payload.nct_id != study.nct_id:
             raise InvalidExtraction(
                 f"provider NCT identifier mismatch: expected {study.nct_id}, got {payload.nct_id}"
@@ -318,9 +501,18 @@ class EligibilityExtractor:
                     or len(candidate.predicate.children) < clause_count
                 )
             ):
-                raise InvalidExtraction(
+                message = (
                     "multi-clause source items require an explicit compound or unsupported predicate"
                 )
+                candidate_index = payload.criteria.index(candidate)
+                feedback = [
+                    {
+                        "path": f"criteria.{candidate_index}.predicate",
+                        "type": "value_error.multi_clause_representation",
+                        "message": message,
+                    }
+                ]
+                raise InvalidExtraction(message, feedback=feedback)
         return payload
 
     def _materialize(
