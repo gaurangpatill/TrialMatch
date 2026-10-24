@@ -21,10 +21,12 @@ Implement on `feature/geo-optimization`. Check a task only after its acceptance 
   - _Verified 2026-10-24: `pytest backend/tests/geography -q` passed 19 tests (temporary host validation used Python 3.14/Pydantic 2.12.5 because project Python 3.11 was unavailable). Official client acquisition discovered `OBJECTID`; expected/fetched/unique accepted 2604/2604/2604, duplicates 0, quarantined 0, 27 pages, retries 0, complete; source missingness was `BG_MHHI` 19 and all other required fields 0; normalized 2604 records into 187 municipality EJ-subset aggregates._
   - _Requirements: R1, R2, R5_
 
-- [ ] **G4. Integrate agreed trial-site exchange and access indicators**
+- [x] **G4. Integrate agreed trial-site exchange and access indicators**
   - Consume coordinated site fields without importing clinical internals.
   - Implement transparent deduplication/location resolution and report unresolved sites.
   - Define/version access metrics with assumptions, scale, direction, and tests.
+  - _Verified 2026-10-24 with Python 3.11.10 and pinned dependencies: `pytest backend/tests/geography backend/tests/optimizer -q` passed 81 tests; matching `compileall` passed. The strict external clinical-site adapter, deterministic deduplication, explicit recruiting-only/Massachusetts/condition filters, unresolved reporting, nearest-site distance, and distinct nearby-NCT counts are fixture-tested; no live clinical-site export was available or claimed._
+  - _Official MassGIS geometry run: 2604/2604 unique EJ block groups over 6 pages, zero duplicates/missing/invalid geometry, polygon-centroid fallback for 2604 features, and 187 resolved/0 unresolved municipality representative analytical points. Snapshot: `backend/app/geography/data/municipality_ej_representative_points.json` (81,866 bytes). Genuine SciPy 1.15.2 scenario (187 included, 0 excluded; equal abstract unit cost, budget/events 3, 25 km, lambda 0.6) was optimal/native 0/gap 0.0, selected Hudson/Reading/Sharon, objective 1,639,905.9010591828, covered EJ-subset population proxy 2,636,354 across 87 communities; both greedy baselines selected Clinton/Reading/Walpole, objective 1,636,717.6488802643, population 2,628,696 across 85 communities._
   - _Requirements: R3_
 
 - [ ] **G5. Implement `GET /api/geo`**

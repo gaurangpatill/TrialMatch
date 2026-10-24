@@ -30,6 +30,25 @@ class ArcGISAdvancedQueryCapabilities(BaseModel):
     model_config = ConfigDict(extra="allow")
     supportsPagination: bool | None = None
     supportsOrderBy: bool | None = None
+    supportsReturningGeometryCentroid: bool | None = None
+
+
+class ArcGISSpatialReference(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    wkid: int | None = None
+    latestWkid: int | None = None
+
+
+class ArcGISPoint(StrictModel):
+    x: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    y: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    spatialReference: ArcGISSpatialReference | None = None
+
+
+class ArcGISPolygon(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    rings: list[list[list[float]]]
+    spatialReference: ArcGISSpatialReference | None = None
 
 
 class ArcGISLayerMetadata(BaseModel):
@@ -41,6 +60,7 @@ class ArcGISLayerMetadata(BaseModel):
     maxRecordCount: int | None = Field(default=None, gt=0)
     fields: list[ArcGISField] = Field(default_factory=list)
     advancedQueryCapabilities: ArcGISAdvancedQueryCapabilities | None = None
+    spatialReference: ArcGISSpatialReference | None = None
 
     @property
     def object_id_field(self) -> str | None:
@@ -71,6 +91,8 @@ class ArcGISError(StrictModel):
 class ArcGISFeature(BaseModel):
     model_config = ConfigDict(extra="forbid")
     attributes: dict[str, Any]
+    geometry: dict[str, Any] | None = None
+    centroid: dict[str, Any] | None = None
 
 
 class ArcGISQueryEnvelope(BaseModel):
@@ -80,6 +102,7 @@ class ArcGISQueryEnvelope(BaseModel):
     features: list[ArcGISFeature]
     exceededTransferLimit: bool = False
     objectIdFieldName: str | None = None
+    spatialReference: ArcGISSpatialReference | None = None
 
 
 class RawEJAttributes(BaseModel):
@@ -230,15 +253,161 @@ class NormalizationResult(StrictModel):
     quarantined: tuple[QuarantinedRecord, ...]
 
 
+class BlockGroupRepresentativePoint(StrictModel):
+    source_id: str
+    municipality: str
+    total_population: int | None = Field(ge=0)
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    point_method: Literal["arcgis_returned_centroid", "polygon_area_centroid"]
+
+
+class MunicipalityRepresentativePoint(StrictModel):
+    municipality: str
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+    resolution_status: Literal["resolved", "unresolved"]
+    point_method: Literal[
+        "population_weighted_mean_of_ej_block_group_points",
+        "unweighted_mean_fallback_zero_or_missing_population",
+        "unresolved_no_valid_geometry",
+    ]
+    block_group_source_count: int = Field(ge=1)
+    valid_geometry_count: int = Field(ge=0)
+    missing_geometry_count: int = Field(ge=0)
+    invalid_geometry_count: int = Field(ge=0)
+    represented_population: int = Field(ge=0)
+    source_ids: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def coordinate_pair_matches_status(self) -> "MunicipalityRepresentativePoint":
+        present = self.latitude is not None and self.longitude is not None
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("municipality latitude and longitude must be present together")
+        if present != (self.resolution_status == "resolved"):
+            raise ValueError("resolved status must match coordinate availability")
+        return self
+
+
+class GeometryAcquisitionReport(StrictModel):
+    source_layer_url: str
+    where: Literal["EJ='Yes'"] = "EJ='Yes'"
+    source_crs: str
+    requested_output_crs: Literal["EPSG:4326"] = "EPSG:4326"
+    server_transformation_method: str
+    acquisition_utc: datetime
+    object_id_field: str
+    query_parameters: dict[str, str | int | bool]
+    expected_source_count: int = Field(ge=0)
+    fetched_record_count: int = Field(ge=0)
+    unique_source_count: int = Field(ge=0)
+    duplicate_count: int = Field(ge=0)
+    page_count: int = Field(ge=0)
+    complete: bool
+    invalid_source_record_count: int = Field(ge=0)
+    missing_geometry_count: int = Field(ge=0)
+    invalid_geometry_count: int = Field(ge=0)
+    arcgis_centroid_count: int = Field(ge=0)
+    polygon_centroid_count: int = Field(ge=0)
+    resolved_municipality_count: int = Field(ge=0)
+    unresolved_municipality_count: int = Field(ge=0)
+    limitations: tuple[str, ...]
+
+
+class MunicipalityPointSnapshot(StrictModel):
+    schema_version: Literal["municipality_ej_representative_points_v1"] = "municipality_ej_representative_points_v1"
+    report: GeometryAcquisitionReport
+    municipalities: tuple[MunicipalityRepresentativePoint, ...]
+
+
+SiteResolutionStatus = Literal["source_coordinates", "verified_geocode", "unresolved"]
+
+
 class TrialSite(StrictModel):
-    """Shared-contract boundary model for later site integration."""
+    """Strict clinical export adapter; never geocodes or infers coordinates."""
 
     nct_id: str
+    conditions: tuple[str, ...] = ()
+    facility_source_id: str | None = None
     facility_name: str
     city: str | None = None
     state: str | None = None
-    latitude: float | None = Field(default=None, ge=-90, le=90)
-    longitude: float | None = Field(default=None, ge=-180, le=180)
+    postal_code: str | None = None
+    country: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+    coordinate_source: str | None = None
+    coordinate_source_reference: str | None = None
+    resolution_status: SiteResolutionStatus = "unresolved"
+    overall_status: str | None = None
+    source_url: str | None = None
+    retrieved_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_location_resolution(self) -> "TrialSite":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be present together")
+        resolved = self.resolution_status in {"source_coordinates", "verified_geocode"}
+        if resolved and (self.latitude is None or not self.coordinate_source or not self.coordinate_source_reference):
+            raise ValueError("resolved sites require coordinates and coordinate provenance")
+        if not resolved and (self.latitude is not None or self.longitude is not None):
+            raise ValueError("unresolved sites cannot provide analysis coordinates")
+        if not self.nct_id.strip() or not self.facility_name.strip():
+            raise ValueError("nct_id and facility_name must not be blank")
+        return self
+
+
+class SiteAdapterReport(StrictModel):
+    input_count: int = Field(ge=0)
+    massachusetts_count: int = Field(ge=0)
+    out_of_state_count: int = Field(ge=0)
+    non_recruiting_or_unknown_count: int = Field(ge=0)
+    deduplicated_count: int = Field(ge=0)
+    duplicate_count: int = Field(ge=0)
+    resolved_count: int = Field(ge=0)
+    unresolved_count: int = Field(ge=0)
+    condition_filter: str | None = None
+    deduplication_method: str
+
+
+class SiteAdapterResult(StrictModel):
+    sites: tuple[TrialSite, ...]
+    report: SiteAdapterReport
+
+
+class AccessIndicator(StrictModel):
+    municipality: str
+    municipality_resolution_status: Literal["resolved", "unresolved"]
+    spatial_analysis_available: bool
+    nearest_resolved_recruiting_site_distance_km: float | None = Field(default=None, ge=0)
+    distinct_nearby_nct_count: int = Field(ge=0)
+    inclusive_radius_km: float = Field(ge=0)
+    condition_filter: str | None = None
+    total_site_count: int = Field(ge=0)
+    resolved_site_count: int = Field(ge=0)
+    unresolved_site_count: int = Field(ge=0)
+    deduplicated_site_count: int = Field(ge=0)
+    distance_limitation: Literal[
+        "straight-line great-circle distance; not travel time or route distance"
+    ] = "straight-line great-circle distance; not travel time or route distance"
+
+
+class ScenarioConstructionReport(StrictModel):
+    included_municipality_count: int = Field(ge=0)
+    excluded_municipality_count: int = Field(ge=0)
+    excluded_unresolved_point_count: int = Field(ge=0)
+    excluded_null_population_count: int = Field(ge=0)
+    excluded_missing_equity_indicator_count: int = Field(ge=0)
+    aggregate_source_count: int = Field(ge=0)
+    point_source: str
+    equity_indicator: str
+    equity_normalization_method: str
+    equity_interpretation: str
+    scenario_label: Literal["condition-independent; no live clinical-site records integrated"] = (
+        "condition-independent; no live clinical-site records integrated"
+    )
+    event_cost_assumption: str
+    assumptions: tuple[str, ...]
 
 
 class DerivedMetricDefinition(StrictModel):

@@ -78,6 +78,7 @@ def build_greedy_baseline(
         covered_community_ids=covered_ids,
         total_events=len(selected_ids),
         total_cost=total_cost,
+        cost_unit=scenario.cost_unit,
         modeled_ej_subset_population_proxy_covered=population,
         modeled_outreach_coverage_objective=objective,
         constraint_satisfaction=constraints,

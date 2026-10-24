@@ -28,7 +28,6 @@ ASSUMPTIONS = (
     "missing values remain null, and a constant observed indicator maps to neutral 0.5.",
     "The objective weight is w_i = P_i * ((1 - lambda) + lambda * E_i).",
     "Each covered community contributes at most once, regardless of catchment overlap.",
-    "Candidate costs represent one outreach event in USD and are assumed additive.",
 )
 LIMITATIONS = (
     "Modeled outreach coverage is not an enrollment prediction or causal outcome.",
@@ -141,6 +140,7 @@ def _metrics_from_selection(
         "covered_community_ids": covered_ids,
         "total_events": len(selected_ids),
         "total_cost": cost,
+        "cost_unit": scenario.cost_unit,
         "modeled_ej_subset_population_proxy_covered": population,
         "modeled_outreach_coverage_objective": objective,
         "constraint_satisfaction": constraints,
@@ -207,7 +207,13 @@ def optimize(
         objective_version=scenario.objective_version,
         equity_weight_lambda=scenario.equity_weight_lambda,
         coverage_radius_km=scenario.coverage_radius_km,
-        assumptions=ASSUMPTIONS,
+        assumptions=ASSUMPTIONS + (
+            (
+                "Candidate costs are additive assumed USD amounts per outreach event."
+                if scenario.cost_unit == "usd_per_outreach_event"
+                else "Candidate costs are equal abstract event units, not observed monetary costs."
+            ),
+        ),
         limitations=LIMITATIONS,
         **metrics,
     )

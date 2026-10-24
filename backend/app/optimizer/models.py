@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CoordinateSource = Literal["synthetic_test_fixture", "verified_coordinate_source"]
+CostUnit = Literal["usd_per_outreach_event", "abstract_equal_event_units"]
 SolverStatus = Literal["optimal", "feasible", "infeasible", "unbounded", "solver_error"]
 
 
@@ -35,7 +36,7 @@ class CandidateLocation(LocatedInput):
 
     candidate_id: str = Field(min_length=1)
     event_cost: float = Field(ge=0, allow_inf_nan=False)
-    cost_unit: Literal["usd_per_outreach_event"] = "usd_per_outreach_event"
+    cost_unit: CostUnit = "usd_per_outreach_event"
 
     @field_validator("candidate_id")
     @classmethod
@@ -72,6 +73,7 @@ class OptimizationScenario(StrictModel):
     max_events: int = Field(ge=0)
     coverage_radius_km: float = Field(ge=0, allow_inf_nan=False)
     equity_weight_lambda: float = Field(ge=0, le=1, allow_inf_nan=False)
+    cost_unit: CostUnit = "usd_per_outreach_event"
     required_candidate_ids: tuple[str, ...] = ()
     objective_version: Literal["ej_subset_weighted_coverage_v1"] = (
         "ej_subset_weighted_coverage_v1"
@@ -82,6 +84,16 @@ class OptimizationScenario(StrictModel):
         candidate_ids = [candidate.candidate_id for candidate in self.candidates]
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("candidate IDs must be unique")
+        mismatched_cost_units = [
+            candidate.candidate_id
+            for candidate in self.candidates
+            if candidate.cost_unit != self.cost_unit
+        ]
+        if mismatched_cost_units:
+            raise ValueError(
+                "candidate cost units must match scenario cost_unit: "
+                + ", ".join(sorted(mismatched_cost_units))
+            )
         community_ids = [community.community_id for community in self.communities]
         if len(set(community_ids)) != len(community_ids):
             raise ValueError("community IDs must be unique")
@@ -137,6 +149,7 @@ class PlanMetrics(StrictModel):
     covered_community_ids: tuple[str, ...]
     total_events: int = Field(ge=0)
     total_cost: float = Field(ge=0, allow_inf_nan=False)
+    cost_unit: CostUnit
     modeled_ej_subset_population_proxy_covered: int = Field(ge=0)
     modeled_outreach_coverage_objective: float = Field(ge=0, allow_inf_nan=False)
     constraint_satisfaction: ConstraintSatisfaction
