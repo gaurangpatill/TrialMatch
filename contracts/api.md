@@ -164,7 +164,18 @@ Request rules:
     {
       "nct_id": "NCT01234567",
       "title": "Example Study",
-      "screening_status": "potential_match",
+      "screening_status": "unresolved",
+      "extraction_coverage": {
+        "status": "partial",
+        "protocol_item_count": 8,
+        "accounted_item_count": 6,
+        "evaluable_criterion_count": 4,
+        "unsupported_protocol_requirement_count": 2,
+        "uncovered_protocol_requirement_count": 2,
+        "independently_verified": false,
+        "verification_method": null,
+        "reason": "Eligibility extraction is partial: 2 explicitly enumerated protocol requirements remain unprocessed."
+      },
       "criteria": [
         {
           "criterion_id": "NCT01234567-inc-001",
@@ -201,8 +212,11 @@ Enums:
 - `criterion.status`: `met | not_met | unknown`
 - `criterion.classification`: `inclusion | exclusion`
 - `screening_status`: `potential_match | known_mismatch | unresolved`
+- `extraction_coverage.status`: `not_attempted | partial | complete | failed | stale`
 
-A result is `known_mismatch` when a known fact fails an inclusion or satisfies an exclusion. Missing facts never produce `met`. Overall aggregation rules must be deterministic and documented in the Clinical Intelligence design.
+`extraction_coverage` is independent of criterion outcomes. It records explicit protocol-item accounting for the current source version; criterion count and provider-declared completeness alone never establish completeness. `potential_match` is allowed only when current-source coverage is declared complete **and separately approved through a persisted independent verification method**, at least one criterion is deterministically evaluable, every evaluated criterion is `met`, and there are no unknown, unsupported, uncovered, or contradictory requirements. A reliable failed inclusion or applicable exclusion still produces `known_mismatch` under incomplete coverage. All other incomplete, unsupported, stale, failed, or unknown cases return `unresolved`.
+
+A result is `known_mismatch` when a known fact fails an inclusion or satisfies an exclusion. Missing facts never produce `met`. Coverage completeness is preliminary protocol accounting, not confirmed eligibility or clinical validation. Overall aggregation rules must remain deterministic and documented in the Clinical Intelligence design.
 
 ---
 

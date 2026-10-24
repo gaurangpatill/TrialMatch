@@ -50,9 +50,11 @@ Run a bounded curated extraction:
 python -m backend.app.clinical.cli extract --limit 20
 ```
 
-Provider JSON must pass strict Pydantic validation, preserve exact criterion text found in the protocol, use the supported predicate vocabulary, and match the source NCT ID. Accepted output is cached by source hash, schema/prompt version, provider, and model. A valid cache remains usable if that provider later becomes unavailable.
+Provider JSON must pass strict Pydantic validation, use deterministic `item-NNN` identifiers for every non-heading source line, preserve exact criterion and uncovered-item text found in the protocol, use the supported predicate vocabulary, match the source NCT ID, and explicitly reconcile every segmented protocol item as accounted or uncovered. Obvious multi-clause source lines require an explicit supported compound or unsupported predicate; provider-declared completeness remains partial until a separate persisted `manual_protocol_review` approval is recorded. A successful provider response or nonzero rule count never proves complete coverage. Accepted output is published atomically with criteria and cached by source hash, schema/prompt version, provider, and model; only after success are superseded generations removed. Invalid, unavailable, or failed refreshes preserve the previous accepted generation, while source-hash filtering prevents stale rules from being evaluated.
 
-Structured source age/sex fields are independently converted into deterministic criteria; they are labeled `source_structured`, never represented as LLM output.
+Structured source age/sex fields are independently converted into deterministic criteria; they are labeled `source_structured`, never represented as LLM output, and never establish full-protocol coverage. Matching remains `unresolved` unless current-source coverage is explicitly complete and all supported criteria are met; a reliable mismatch remains reportable under incomplete coverage.
+
+No LLM environment variables or credentials were available during the October 24 readiness audit, so no live extraction is claimed. A human must provide all four values above and authorize a bounded `--limit 3` to `--limit 5` run before any extraction is represented as live.
 
 ## APIs
 

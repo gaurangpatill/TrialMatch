@@ -31,7 +31,9 @@ The SciPy MILP selects locations according to modeled inputs, constraints, and o
 
 ## Prototype and operational limitations
 
-Clinical ingestion, local search, deterministic source-structured age/sex screening, matching APIs, and the synthetic Patient Portal are implemented and verified on the clinical feature branch. The checked-in manifest records a complete 3,145-study source snapshot acquired on October 24, 2026, but generated SQLite/cache data is intentionally not committed and must be reproduced during deployment. Only 20 studies received expanded detail retrieval in that run.
+Clinical ingestion, local search, deterministic screening, matching APIs, and the synthetic Patient Portal are implemented and verified on the clinical feature branch. The checked-in manifest records a complete 3,145-study source snapshot acquired on October 24, 2026, but generated SQLite/cache data is intentionally not committed and must be reproduced during deployment. A condition-focused cohort of 100 cancer-related studies received expanded detail retrieval; it is not complete statewide protocol or site coverage. The committed site export contains 149 explicitly recruiting Massachusetts facilities across 86 of those studies. Source `geoPoint` coordinates are preserved but were not independently geocoded or confirmed at facility precision.
+
+A result remains `unresolved` unless independently persisted current-source coverage explicitly accounts for every enumerated protocol item and all supported criteria are met. Passing source-structured age or sex checks or provider-declared completeness alone cannot produce `potential_match`; a reliable known mismatch may still be reported under partial coverage. No live extraction generation currently has independent coverage approval.
 
 The schema-guided LLM extraction adapter and cache boundary are implemented and tested with controlled providers, but no live provider was configured for the verified run. Therefore no criterion may be represented as LLM-extracted until a named provider/model is configured and a successful bounded extraction is recorded. Source-structured criteria are labeled separately.
 

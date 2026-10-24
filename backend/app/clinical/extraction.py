@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -13,11 +14,11 @@ import httpx
 from pydantic import ValidationError
 
 from .database import ClinicalRepository
-from .models import ExtractionPayload, StructuredCriterion, Study
+from .models import CriterionOperator, ExtractionPayload, StructuredCriterion, Study
 
 
-SCHEMA_VERSION = "1.0"
-PROMPT_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
+PROMPT_VERSION = "2.0"
 
 
 class ExtractionError(RuntimeError):
@@ -95,9 +96,11 @@ class OpenAICompatibleProvider:
                 {
                     "role": "system",
                     "content": (
-                        "Extract only criteria representable by the supplied schema. Copy original_text "
-                        "verbatim from the protocol. Use unsupported when meaning cannot be represented. "
-                        "Do not decide patient eligibility and do not invent criteria."
+                        "Segment and account for every atomic inclusion or exclusion protocol item. "
+                        "Copy every original_text verbatim. Put representable and unsupported items "
+                        "in criteria; put unprocessed items in coverage.uncovered_items with a reason. "
+                        "Declare complete only when every protocol item is accounted for and none is "
+                        "uncovered. Do not decide patient eligibility or invent criteria."
                     ),
                 },
                 {
@@ -107,6 +110,12 @@ class OpenAICompatibleProvider:
                             "nct_id": study.nct_id,
                             "source_url": study.source_url,
                             "eligibility_criteria": study.eligibility_criteria,
+                            "source_items": [
+                                {"source_item_id": item_id, "original_text": text}
+                                for item_id, (text, _) in _protocol_items(
+                                    study.eligibility_criteria
+                                ).items()
+                            ],
                         }
                     ),
                 },
@@ -131,6 +140,34 @@ class OpenAICompatibleProvider:
         finally:
             if owns_client:
                 await client.aclose()
+
+
+def _protocol_items(eligibility_text: str) -> dict[str, tuple[str, int]]:
+    """Segment non-heading lines and identify obvious atomic-clause counts."""
+
+    items: dict[str, tuple[str, int]] = {}
+    for raw_line in eligibility_text.splitlines():
+        line = raw_line.strip()
+        if not line or (line.endswith(":") and len(line) <= 120):
+            continue
+        item_id = f"item-{len(items) + 1:03d}"
+        items[item_id] = (line, _obvious_clause_count(line))
+    return items
+
+
+def _obvious_clause_count(text: str) -> int:
+    normalized = re.sub(
+        r"(?i)\bbetween\s+\d+(?:\.\d+)?\s+and\s+\d+(?:\.\d+)?",
+        "range_expression",
+        text,
+    )
+    normalized = re.sub(
+        r"(?i)\bor\s+(?:older|younger|less|more)\b",
+        "comparative_expression",
+        normalized,
+    )
+    separators = len(re.findall(r"\s+(?:and|or)\s+|;", normalized, flags=re.IGNORECASE))
+    return separators + 1
 
 
 def provider_from_environment() -> LLMProvider:
@@ -168,28 +205,74 @@ class EligibilityExtractor:
         if not study.eligibility_criteria:
             raise ExtractionError(f"{study.nct_id} has no detailed eligibility text")
         key = self.cache_key(study)
-        cached = self.repository.get_cached_extraction(key)
+        try:
+            cached = self.repository.get_cached_extraction(key)
+        except (json.JSONDecodeError, TypeError):
+            self.repository.delete_extraction_cache(key)
+            cached = None
         if cached is not None:
-            payload = self._validate_payload(study, cached)
-            criteria = self._materialize(study, payload)
-            self.repository.replace_criteria(study.nct_id, "llm", criteria)
-            return criteria, True
+            try:
+                payload = self._validate_payload(study, cached)
+                criteria = self._materialize(study, payload)
+                self._publish(study, key, payload, criteria)
+                return criteria, True
+            except InvalidExtraction:
+                self.repository.delete_extraction_cache(key)
 
-        raw_payload = await self.provider.extract(study)
-        payload = self._validate_payload(study, raw_payload)
+        try:
+            raw_payload = await self.provider.extract(study)
+            payload = self._validate_payload(study, raw_payload)
+            criteria = self._materialize(study, payload)
+            self._publish(study, key, payload, criteria)
+            return criteria, False
+        except ExtractionError as exc:
+            self.repository.record_extraction_attempt(
+                nct_id=study.nct_id,
+                source_hash=study.source_hash,
+                provider=self.provider.name,
+                model=self.provider.model,
+                schema_version=SCHEMA_VERSION,
+                prompt_version=PROMPT_VERSION,
+                status="failed",
+                error=f"{type(exc).__name__}: {exc}",
+                created_at=datetime.now(UTC),
+            )
+            raise
+        except Exception as exc:
+            wrapped = ExtractionError(f"extraction publication failed: {type(exc).__name__}: {exc}")
+            self.repository.record_extraction_attempt(
+                nct_id=study.nct_id,
+                source_hash=study.source_hash,
+                provider=self.provider.name,
+                model=self.provider.model,
+                schema_version=SCHEMA_VERSION,
+                prompt_version=PROMPT_VERSION,
+                status="failed",
+                error=str(wrapped),
+                created_at=datetime.now(UTC),
+            )
+            raise wrapped from exc
+
+    def _publish(
+        self,
+        study: Study,
+        cache_key: str,
+        payload: ExtractionPayload,
+        criteria: list[StructuredCriterion],
+    ) -> None:
         now = datetime.now(UTC)
-        self.repository.save_extraction_cache(
-            cache_key=key,
+        self.repository.publish_extraction(
+            cache_key=cache_key,
             nct_id=study.nct_id,
             source_hash=study.source_hash,
             provider=self.provider.name,
             model=self.provider.model,
+            schema_version=SCHEMA_VERSION,
+            prompt_version=PROMPT_VERSION,
             payload=payload.model_dump(mode="json"),
+            criteria=criteria,
             created_at=now,
         )
-        criteria = self._materialize(study, payload, created_at=now)
-        self.repository.replace_criteria(study.nct_id, "llm", criteria)
-        return criteria, False
 
     @staticmethod
     def _validate_payload(study: Study, raw_payload: dict[str, Any]) -> ExtractionPayload:
@@ -206,9 +289,38 @@ class EligibilityExtractor:
                 f"provider NCT identifier mismatch: expected {study.nct_id}, got {payload.nct_id}"
             )
         assert study.eligibility_criteria is not None
-        for candidate in payload.criteria:
-            if candidate.original_text not in study.eligibility_criteria:
-                raise InvalidExtraction("criterion original_text is not verbatim source evidence")
+        protocol_items = _protocol_items(study.eligibility_criteria)
+        if payload.coverage.protocol_item_count != len(protocol_items):
+            raise InvalidExtraction(
+                "coverage protocol_item_count does not match deterministic source segmentation"
+            )
+        candidates = {item.source_item_id: item for item in payload.criteria}
+        gaps = {item.source_item_id: item for item in payload.coverage.uncovered_items}
+        if set(candidates) | set(gaps) != set(protocol_items):
+            raise InvalidExtraction(
+                "coverage source_item_id values must account for every segmented source item"
+            )
+        for item_id, (source_text, clause_count) in protocol_items.items():
+            submitted = candidates.get(item_id) or gaps[item_id]
+            if submitted.original_text != source_text:
+                raise InvalidExtraction(
+                    "coverage evidence is not verbatim source evidence for its source_item_id"
+                )
+            candidate = candidates.get(item_id)
+            if (
+                payload.coverage.status == "complete"
+                and candidate is not None
+                and clause_count > 1
+                and candidate.predicate.operator != CriterionOperator.UNSUPPORTED
+                and (
+                    candidate.predicate.operator
+                    not in {CriterionOperator.ALL, CriterionOperator.ANY}
+                    or len(candidate.predicate.children) < clause_count
+                )
+            ):
+                raise InvalidExtraction(
+                    "multi-clause source items require an explicit compound or unsupported predicate"
+                )
         return payload
 
     def _materialize(
@@ -223,13 +335,15 @@ class EligibilityExtractor:
         for index, candidate in enumerate(payload.criteria, start=1):
             identity = hashlib.sha256(
                 (
-                    f"{study.nct_id}:{index}:{candidate.classification.value}:"
+                    f"{study.nct_id}:{candidate.source_item_id}:{index}:"
+                    f"{candidate.classification.value}:"
                     f"{candidate.original_text}:{candidate.predicate.model_dump_json()}"
                 ).encode()
             ).hexdigest()[:12]
             result.append(
                 StructuredCriterion(
                     criterion_id=f"{study.nct_id}-llm-{identity}",
+                    source_item_id=candidate.source_item_id,
                     nct_id=study.nct_id,
                     classification=candidate.classification,
                     original_text=candidate.original_text,

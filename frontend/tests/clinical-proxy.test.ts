@@ -120,4 +120,46 @@ describe("clinical API proxies", () => {
     expect(body.error.code).toBe("INVALID_UPSTREAM_RESPONSE");
     expect(JSON.stringify(body)).not.toContain("private stack trace");
   });
+
+  it("accepts coverage-aware match results and rejects missing coverage", async () => {
+    const result = {
+      nct_id: "NCT00000001",
+      title: "Synthetic study",
+      screening_status: "unresolved",
+      extraction_coverage: {
+        status: "partial",
+        protocol_item_count: 2,
+        accounted_item_count: 1,
+        evaluable_criterion_count: 1,
+        unsupported_protocol_requirement_count: 0,
+        uncovered_protocol_requirement_count: 1,
+        independently_verified: false,
+        verification_method: null,
+        reason: "One source requirement remains uncovered.",
+      },
+      criteria: [],
+      known_mismatches: [],
+      unresolved_requirements: ["One source requirement remains uncovered."],
+      missing_questions: [],
+      source_url: "https://clinicaltrials.gov/study/NCT00000001",
+    };
+    const payload = {
+      profile_id: "synthetic",
+      results: [result],
+      disclaimer: "Preliminary screening only. Study staff must confirm eligibility.",
+      generated_at: "2026-10-24T18:00:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json(payload))
+      .mockResolvedValueOnce(
+        Response.json({...payload, results: [{...result, extraction_coverage: undefined}]}),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const valid = await POST(new Request("http://trialmatch.test/api/match", {method: "POST", body: "{}"}));
+    const invalid = await POST(new Request("http://trialmatch.test/api/match", {method: "POST", body: "{}"}));
+
+    expect(valid.status).toBe(200);
+    expect(invalid.status).toBe(502);
+  });
 });

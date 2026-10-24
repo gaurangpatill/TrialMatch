@@ -71,13 +71,13 @@ Compound evaluation uses three-valued logic. For `all`, any false determines fal
 
 Age/range operations define boundary inclusivity in structured data. Temporal operations require a reference date and dated fact; otherwise unknown. Unsupported operators/attributes always return unknown with a reason. Detect contradictory structured criteria and expose a warning.
 
-Overall trial status:
+Overall trial status is gated by an independently persisted current-source extraction coverage record:
 
-- `known_mismatch` if any criterion is `not_met`;
-- `potential_match` if at least one evaluable criterion exists, all criteria are `met`, and none are unknown;
-- `unresolved` otherwise.
+- `known_mismatch` if any reliable current-source criterion is `not_met`, even when coverage is incomplete;
+- `potential_match` only when explicit protocol-item accounting is declared `complete`, a separate persisted independent coverage approval is current, at least one criterion is evaluable, every current criterion is `met`, and no criterion, gap, unsupported item, or contradiction is unresolved;
+- `unresolved` for not-attempted, partial, failed, stale, unsupported, missing-patient-fact, contradictory, or zero-evaluable-criterion cases.
 
-No score or probability is inferred.
+Source-structured age/sex rules do not establish full protocol coverage. Coverage metadata must use deterministic source-item identities and enumerate accounted criteria and verbatim uncovered source items. Obvious multi-clause items require compound representation, but provider declarations still cannot self-verify semantic completeness: a separate persisted `manual_protocol_review` or test-only `deterministic_test_fixture` approval is required. Successful provider execution or rule count alone never proves completeness. No score, probability, or confirmed eligibility is inferred.
 
 ## API behavior
 

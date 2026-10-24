@@ -258,7 +258,11 @@ class Predicate(StrictModel):
         numeric = scalar | {CriterionOperator.BETWEEN}
         facts = {CriterionOperator.PRESENT, CriterionOperator.ABSENT, CriterionOperator.WITHIN_DAYS}
 
-        numeric_values = [item for item in (self.value, self.lower, self.upper) if isinstance(item, (int, float)) and not isinstance(item, bool)]
+        numeric_values = [
+            item
+            for item in (self.value, self.lower, self.upper)
+            if isinstance(item, (int, float)) and not isinstance(item, bool)
+        ]
         if any(not math.isfinite(item) for item in numeric_values):
             raise ValueError("numeric predicate values and bounds must be finite")
 
@@ -351,6 +355,7 @@ class Predicate(StrictModel):
 
 class StructuredCriterion(StrictModel):
     criterion_id: str = Field(min_length=1)
+    source_item_id: str | None = None
     nct_id: str = Field(pattern=r"^NCT\d{8}$")
     classification: CriterionClassification
     original_text: str = Field(min_length=1)
@@ -365,7 +370,29 @@ class StructuredCriterion(StrictModel):
     created_at: datetime
 
 
+class ExtractionCoverageStatus(str, Enum):
+    NOT_ATTEMPTED = "not_attempted"
+    PARTIAL = "partial"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    STALE = "stale"
+
+
+class CoverageGap(StrictModel):
+    source_item_id: str = Field(pattern=r"^item-\d{3,}$")
+    original_text: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class ExtractionCoverageDeclaration(StrictModel):
+    status: Literal["partial", "complete"]
+    protocol_item_count: int = Field(ge=0)
+    accounted_item_count: int = Field(ge=0)
+    uncovered_items: list[CoverageGap] = Field(default_factory=list)
+
+
 class ExtractionCandidate(StrictModel):
+    source_item_id: str = Field(pattern=r"^item-\d{3,}$")
     classification: CriterionClassification
     original_text: str = Field(min_length=1)
     predicate: Predicate
@@ -374,7 +401,27 @@ class ExtractionCandidate(StrictModel):
 
 class ExtractionPayload(StrictModel):
     nct_id: str = Field(pattern=r"^NCT\d{8}$")
+    coverage: ExtractionCoverageDeclaration
     criteria: list[ExtractionCandidate]
+
+    @model_validator(mode="after")
+    def coverage_counts_reconcile(self) -> ExtractionPayload:
+        if self.coverage.accounted_item_count != len(self.criteria):
+            raise ValueError("accounted_item_count must equal criteria length")
+        if self.coverage.protocol_item_count != len(self.criteria) + len(
+            self.coverage.uncovered_items
+        ):
+            raise ValueError("protocol_item_count must reconcile criteria and uncovered items")
+        if self.coverage.status == "complete" and self.coverage.uncovered_items:
+            raise ValueError("complete coverage cannot contain uncovered items")
+        if self.coverage.status == "partial" and not self.coverage.uncovered_items:
+            raise ValueError("partial coverage requires explicit uncovered items")
+        item_ids = [item.source_item_id for item in self.criteria] + [
+            item.source_item_id for item in self.coverage.uncovered_items
+        ]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("source_item_id values must be unique")
+        return self
 
 
 class PatientFacts(StrictModel):
@@ -529,10 +576,23 @@ class CriterionEvaluation(StrictModel):
     extraction_uncertainty: str | None
 
 
+class ExtractionCoverageSummary(StrictModel):
+    status: ExtractionCoverageStatus
+    protocol_item_count: int | None = Field(default=None, ge=0)
+    accounted_item_count: int = Field(default=0, ge=0)
+    evaluable_criterion_count: int = Field(default=0, ge=0)
+    unsupported_protocol_requirement_count: int = Field(default=0, ge=0)
+    uncovered_protocol_requirement_count: int = Field(default=0, ge=0)
+    independently_verified: bool = False
+    verification_method: str | None = None
+    reason: str
+
+
 class TrialMatchResult(StrictModel):
     nct_id: str
     title: str
     screening_status: ScreeningStatus
+    extraction_coverage: ExtractionCoverageSummary
     criteria: list[CriterionEvaluation]
     known_mismatches: list[str]
     unresolved_requirements: list[str]

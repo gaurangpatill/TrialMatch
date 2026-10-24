@@ -6,6 +6,7 @@ import {FormEvent, useEffect, useState} from "react";
 import type {
   ApiError,
   CriterionStatus,
+  ExtractionCoverageStatus,
   MatchResponse,
   ScreeningStatus,
   TrialSearchResponse,
@@ -13,7 +14,7 @@ import type {
 } from "@/lib/clinical-contracts";
 
 const statusLabels: Record<ScreeningStatus, string> = {
-  potential_match: "Potential match",
+  potential_match: "All covered checks met",
   known_mismatch: "Known mismatch",
   unresolved: "Needs clarification",
 };
@@ -340,6 +341,20 @@ export function PatientPortal() {
                     </span>
                   </div>
 
+                  <div className={`mt-5 rounded-xl border p-4 text-sm ${
+                    result.extraction_coverage.status === "complete"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                      : "border-amber-200 bg-amber-50 text-amber-950"
+                  }`}>
+                    <p className="font-semibold">
+                      Protocol extraction coverage: {coverageLabel(result.extraction_coverage.status)}
+                    </p>
+                    <p className="mt-1 leading-6">{result.extraction_coverage.reason}</p>
+                    <p className="mt-2 text-xs">
+                      {result.extraction_coverage.accounted_item_count} accounted · {result.extraction_coverage.evaluable_criterion_count} evaluable · {result.extraction_coverage.unsupported_protocol_requirement_count} unsupported · {result.extraction_coverage.uncovered_protocol_requirement_count} uncovered · {result.extraction_coverage.independently_verified ? `independently verified (${result.extraction_coverage.verification_method})` : "not independently verified"}
+                    </p>
+                  </div>
+
                   {result.criteria.length ? (
                     <div className="mt-5 space-y-3">
                       {result.criteria.map((criterion) => (
@@ -422,6 +437,16 @@ function screeningClass(status: ScreeningStatus): string {
     potential_match: "bg-emerald-100 text-emerald-900",
     known_mismatch: "bg-red-100 text-red-900",
     unresolved: "bg-amber-100 text-amber-900",
+  }[status];
+}
+
+function coverageLabel(status: ExtractionCoverageStatus): string {
+  return {
+    not_attempted: "not attempted",
+    partial: "partial",
+    complete: "independently verified complete protocol-item accounting",
+    failed: "latest attempt failed",
+    stale: "stale source version",
   }[status];
 }
 

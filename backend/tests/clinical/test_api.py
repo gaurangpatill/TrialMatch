@@ -67,7 +67,8 @@ def test_match_contract_and_evidence(study_factory, tmp_path):
     assert response.status_code == 200
     result = response.json()["results"][0]
     assert result["nct_id"] == study.nct_id
-    assert result["screening_status"] == "potential_match"
+    assert result["screening_status"] == "unresolved"
+    assert result["extraction_coverage"]["status"] == "not_attempted"
     criterion_texts = {item["original_text"] for item in result["criteria"]}
     assert "Minimum Age: 18 Years" in criterion_texts
     assert "Maximum Age: 65 Years" in criterion_texts

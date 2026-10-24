@@ -38,6 +38,12 @@ export type TrialSearchResponse = {
 
 export type CriterionStatus = "met" | "not_met" | "unknown";
 export type ScreeningStatus = "potential_match" | "known_mismatch" | "unresolved";
+export type ExtractionCoverageStatus =
+  | "not_attempted"
+  | "partial"
+  | "complete"
+  | "failed"
+  | "stale";
 
 export type MatchResponse = {
   profile_id: string;
@@ -45,6 +51,17 @@ export type MatchResponse = {
     nct_id: string;
     title: string;
     screening_status: ScreeningStatus;
+    extraction_coverage: {
+      status: ExtractionCoverageStatus;
+      protocol_item_count: number | null;
+      accounted_item_count: number;
+      evaluable_criterion_count: number;
+      unsupported_protocol_requirement_count: number;
+      uncovered_protocol_requirement_count: number;
+      independently_verified: boolean;
+      verification_method: string | null;
+      reason: string;
+    };
     criteria: Array<{
       criterion_id: string;
       classification: "inclusion" | "exclusion";

@@ -126,6 +126,7 @@ function isTrialMatchResult(value: unknown): boolean {
       "nct_id",
       "title",
       "screening_status",
+      "extraction_coverage",
       "criteria",
       "known_mismatches",
       "unresolved_requirements",
@@ -138,11 +139,43 @@ function isTrialMatchResult(value: unknown): boolean {
     ["potential_match", "known_mismatch", "unresolved"].includes(
       value.screening_status as string,
     ) &&
+    isExtractionCoverage(value.extraction_coverage) &&
     Array.isArray(value.criteria) &&
     value.criteria.every(isCriterionEvaluation) &&
     isStringArray(value.known_mismatches) &&
     isStringArray(value.unresolved_requirements) &&
     isStringArray(value.missing_questions)
+  );
+}
+
+function isExtractionCoverage(value: unknown): boolean {
+  if (
+    !hasExactKeys(value, [
+      "status",
+      "protocol_item_count",
+      "accounted_item_count",
+      "evaluable_criterion_count",
+      "unsupported_protocol_requirement_count",
+      "uncovered_protocol_requirement_count",
+      "independently_verified",
+      "verification_method",
+      "reason",
+    ])
+  ) return false;
+  return (
+    ["not_attempted", "partial", "complete", "failed", "stale"].includes(
+      value.status as string,
+    ) &&
+    (value.protocol_item_count === null || Number.isInteger(value.protocol_item_count)) &&
+    [
+      value.accounted_item_count,
+      value.evaluable_criterion_count,
+      value.unsupported_protocol_requirement_count,
+      value.uncovered_protocol_requirement_count,
+    ].every(Number.isInteger) &&
+    typeof value.independently_verified === "boolean" &&
+    (value.verification_method === null || typeof value.verification_method === "string") &&
+    typeof value.reason === "string"
   );
 }
 

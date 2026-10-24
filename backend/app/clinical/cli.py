@@ -78,11 +78,21 @@ async def run_extract(args: argparse.Namespace) -> int:
     for study in studies:
         try:
             criteria, from_cache = await extractor.extract(study)
+            state, accepted_payload, coverage_verified, verification_method = (
+                repository.get_extraction_state(study.nct_id, study.source_hash)
+            )
+            coverage = accepted_payload.get("coverage", {}) if accepted_payload else {}
             results.append(
                 {
                     "nct_id": study.nct_id,
                     "criteria": len(criteria),
                     "from_cache": from_cache,
+                    "coverage_status": coverage.get("status", state),
+                    "protocol_item_count": coverage.get("protocol_item_count"),
+                    "accounted_item_count": coverage.get("accounted_item_count"),
+                    "uncovered_item_count": len(coverage.get("uncovered_items", [])),
+                    "independently_verified": coverage_verified,
+                    "verification_method": verification_method,
                     "provider": provider.name,
                     "model": provider.model,
                 }

@@ -69,9 +69,27 @@ CREATE TABLE IF NOT EXISTS extraction_cache (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
     payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    coverage_verified INTEGER NOT NULL DEFAULT 0,
+    coverage_verification_method TEXT,
+    coverage_verified_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_extraction_cache_nct ON extraction_cache(nct_id);
+
+CREATE TABLE IF NOT EXISTS extraction_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nct_id TEXT NOT NULL REFERENCES studies(nct_id) ON DELETE CASCADE,
+    source_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_extraction_attempts_current
+ON extraction_attempts(nct_id, source_hash, created_at);
 """
 
 
@@ -103,6 +121,21 @@ class ClinicalRepository:
             if "pagination_completed" not in columns:
                 connection.execute(
                     "ALTER TABLE ingestion_runs ADD COLUMN pagination_completed INTEGER NOT NULL DEFAULT 0"
+                )
+            cache_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(extraction_cache)")
+            }
+            if "coverage_verified" not in cache_columns:
+                connection.execute(
+                    "ALTER TABLE extraction_cache ADD COLUMN coverage_verified INTEGER NOT NULL DEFAULT 0"
+                )
+            if "coverage_verification_method" not in cache_columns:
+                connection.execute(
+                    "ALTER TABLE extraction_cache ADD COLUMN coverage_verification_method TEXT"
+                )
+            if "coverage_verified_at" not in cache_columns:
+                connection.execute(
+                    "ALTER TABLE extraction_cache ADD COLUMN coverage_verified_at TEXT"
                 )
             connection.commit()
 
@@ -185,6 +218,56 @@ class ClinicalRepository:
             self._upsert_on_connection(connection, payloads)
             connection.execute(
                 "DELETE FROM studies WHERE nct_id NOT IN (SELECT nct_id FROM current_snapshot_ids)"
+            )
+            connection.commit()
+        return len(payloads)
+
+    def publish_complete_snapshot(
+        self,
+        studies: Iterable[Study],
+        source_criteria: dict[str, list[StructuredCriterion]],
+    ) -> int:
+        """Atomically publish a complete study snapshot and all source-derived rules."""
+
+        studies_list = list(studies)
+        payloads = self._study_payloads(studies_list)
+        if not payloads:
+            raise ValueError("refusing to publish an empty complete snapshot")
+        study_by_id = {study.nct_id: study for study in studies_list}
+        if len(study_by_id) != len(studies_list):
+            raise ValueError("complete snapshot contains duplicate NCT identifiers")
+        criteria = [item for values in source_criteria.values() for item in values]
+        for criterion in criteria:
+            study = study_by_id.get(criterion.nct_id)
+            if study is None:
+                raise ValueError("source criterion references a study outside the snapshot")
+            if criterion.extraction_method != "source_structured":
+                raise ValueError("snapshot publication accepts only source_structured criteria")
+            if criterion.source_hash != study.source_hash:
+                raise ValueError("source criterion hash must match its study")
+        identifiers = [(study.nct_id,) for study in studies_list]
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("CREATE TEMP TABLE published_snapshot_ids (nct_id TEXT PRIMARY KEY)")
+            connection.executemany(
+                "INSERT INTO published_snapshot_ids (nct_id) VALUES (?)", identifiers
+            )
+            self._upsert_on_connection(connection, payloads)
+            connection.execute(
+                "DELETE FROM studies WHERE nct_id NOT IN (SELECT nct_id FROM published_snapshot_ids)"
+            )
+            connection.execute("DELETE FROM criteria WHERE extraction_method = 'source_structured'")
+            connection.executemany(
+                "INSERT INTO criteria (criterion_id, nct_id, extraction_method, payload_json) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        criterion.criterion_id,
+                        criterion.nct_id,
+                        criterion.extraction_method,
+                        criterion.model_dump_json(),
+                    )
+                    for criterion in criteria
+                ],
             )
             connection.commit()
         return len(payloads)
@@ -324,7 +407,7 @@ class ClinicalRepository:
             ).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
-    def save_extraction_cache(
+    def publish_extraction(
         self,
         *,
         cache_key: str,
@@ -332,10 +415,45 @@ class ClinicalRepository:
         source_hash: str,
         provider: str,
         model: str,
+        schema_version: str,
+        prompt_version: str,
         payload: dict[str, Any],
+        criteria: list[StructuredCriterion],
         created_at: datetime,
     ) -> None:
+        """Atomically publish validated extraction cache, criteria, and accepted attempt."""
+
+        if any(
+            item.nct_id != nct_id
+            or item.source_hash != source_hash
+            or item.extraction_method != "llm"
+            for item in criteria
+        ):
+            raise ValueError("published criteria must match the extraction generation")
         with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT source_hash FROM studies WHERE nct_id = ?", (nct_id,)
+            ).fetchone()
+            if current is None or current["source_hash"] != source_hash:
+                raise ValueError("cannot publish extraction for a stale or missing study")
+            existing_payloads = connection.execute(
+                """
+                SELECT payload_json, coverage_verified FROM extraction_cache
+                WHERE nct_id = ? AND source_hash = ?
+                """,
+                (nct_id, source_hash),
+            ).fetchall()
+            existing_complete = any(
+                bool(row["coverage_verified"])
+                and json.loads(row["payload_json"]).get("coverage", {}).get("status") == "complete"
+                for row in existing_payloads
+            )
+            incoming_status = payload.get("coverage", {}).get("status")
+            if existing_complete and incoming_status != "complete":
+                raise ValueError(
+                    "refusing to replace complete current-source coverage with incomplete coverage"
+                )
             connection.execute(
                 """
                 INSERT OR REPLACE INTO extraction_cache (
@@ -352,7 +470,152 @@ class ClinicalRepository:
                     created_at.isoformat(),
                 ),
             )
+            connection.execute(
+                "DELETE FROM criteria WHERE nct_id = ? AND extraction_method = 'llm'", (nct_id,)
+            )
+            connection.executemany(
+                "INSERT INTO criteria (criterion_id, nct_id, extraction_method, payload_json) VALUES (?, ?, ?, ?)",
+                [
+                    (item.criterion_id, item.nct_id, item.extraction_method, item.model_dump_json())
+                    for item in criteria
+                ],
+            )
+            connection.execute(
+                "DELETE FROM extraction_cache WHERE nct_id = ? AND cache_key != ?",
+                (nct_id, cache_key),
+            )
+            connection.execute(
+                """
+                INSERT INTO extraction_attempts (
+                    nct_id, source_hash, provider, model, schema_version,
+                    prompt_version, status, error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', NULL, ?)
+                """,
+                (
+                    nct_id,
+                    source_hash,
+                    provider,
+                    model,
+                    schema_version,
+                    prompt_version,
+                    created_at.isoformat(),
+                ),
+            )
             connection.commit()
+
+    def delete_extraction_cache(self, cache_key: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("DELETE FROM extraction_cache WHERE cache_key = ?", (cache_key,))
+            connection.commit()
+
+    def record_extraction_attempt(
+        self,
+        *,
+        nct_id: str,
+        source_hash: str,
+        provider: str,
+        model: str,
+        schema_version: str,
+        prompt_version: str,
+        status: str,
+        error: str,
+        created_at: datetime,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO extraction_attempts (
+                    nct_id, source_hash, provider, model, schema_version,
+                    prompt_version, status, error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    nct_id,
+                    source_hash,
+                    provider,
+                    model,
+                    schema_version,
+                    prompt_version,
+                    status,
+                    error,
+                    created_at.isoformat(),
+                ),
+            )
+            connection.commit()
+
+    def approve_extraction_coverage(
+        self,
+        cache_key: str,
+        *,
+        verification_method: str,
+        verified_at: datetime,
+    ) -> None:
+        allowed = {"manual_protocol_review", "deterministic_test_fixture"}
+        if verification_method not in allowed:
+            raise ValueError("unsupported independent coverage verification method")
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload_json FROM extraction_cache WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("extraction generation does not exist")
+            payload = json.loads(row["payload_json"])
+            if payload.get("coverage", {}).get("status") != "complete":
+                raise ValueError("only provider-declared complete coverage can be independently verified")
+            connection.execute(
+                """
+                UPDATE extraction_cache
+                SET coverage_verified = 1,
+                    coverage_verification_method = ?,
+                    coverage_verified_at = ?
+                WHERE cache_key = ?
+                """,
+                (verification_method, verified_at.isoformat(), cache_key),
+            )
+            connection.commit()
+
+    def get_extraction_state(
+        self, nct_id: str, source_hash: str
+    ) -> tuple[str, dict[str, Any] | None, bool, str | None]:
+        with closing(self._connect()) as connection:
+            accepted = connection.execute(
+                """
+                SELECT payload_json, coverage_verified, coverage_verification_method
+                FROM extraction_cache
+                WHERE nct_id = ? AND source_hash = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (nct_id, source_hash),
+            ).fetchone()
+            if accepted:
+                try:
+                    return (
+                        "accepted",
+                        json.loads(accepted["payload_json"]),
+                        bool(accepted["coverage_verified"]),
+                        accepted["coverage_verification_method"],
+                    )
+                except json.JSONDecodeError:
+                    return "failed", None, False, None
+            attempt = connection.execute(
+                """
+                SELECT status FROM extraction_attempts
+                WHERE nct_id = ? AND source_hash = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (nct_id, source_hash),
+            ).fetchone()
+            if attempt and attempt["status"] != "accepted":
+                return "failed", None, False, None
+            stale = connection.execute(
+                """
+                SELECT 1 FROM extraction_cache
+                WHERE nct_id = ? AND source_hash != ? LIMIT 1
+                """,
+                (nct_id, source_hash),
+            ).fetchone()
+        return ("stale", None, False, None) if stale else ("not_attempted", None, False, None)
 
     @staticmethod
     def _row_to_study(row: sqlite3.Row) -> Study:

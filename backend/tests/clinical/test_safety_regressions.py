@@ -67,7 +67,7 @@ def test_stale_criteria_are_not_evaluated_after_source_change(
 
     assert result.screening_status == ScreeningStatus.UNRESOLVED
     assert result.criteria == []
-    assert "No current validated" in result.unresolved_requirements[0]
+    assert any("No current validated" in item for item in result.unresolved_requirements)
 
 
 @pytest.mark.asyncio
@@ -451,3 +451,28 @@ def test_non_finite_extracted_predicate_numbers_are_rejected(value):
             lower=18,
             upper=value,
         )
+
+
+def test_complete_snapshot_and_source_criteria_publish_atomically(study_factory, tmp_path):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    previous = study_factory("NCT00000003", title="Previous serving snapshot")
+    repository.upsert_studies([previous])
+    first = study_factory("NCT00000001")
+    second = study_factory("NCT00000002")
+    first_criterion = source_structured_criteria(first)[0]
+    conflicting_second = source_structured_criteria(second)[0].model_copy(
+        update={"criterion_id": first_criterion.criterion_id}
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.publish_complete_snapshot(
+            [first, second],
+            {
+                first.nct_id: [first_criterion],
+                second.nct_id: [conflicting_second],
+            },
+        )
+
+    studies, total = repository.search_studies()
+    assert total == 1
+    assert studies[0].nct_id == previous.nct_id

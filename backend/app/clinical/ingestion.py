@@ -104,10 +104,11 @@ class ClinicalIngestionService:
             and detail_retrieved == len(selected_ids)
         )
         if publication_complete:
-            self.repository.replace_complete_snapshot(studies)
-            for study in studies:
-                criteria = source_structured_criteria(study, created_at=retrieval_time)
-                self.repository.replace_criteria(study.nct_id, "source_structured", criteria)
+            source_criteria = {
+                study.nct_id: source_structured_criteria(study, created_at=retrieval_time)
+                for study in studies
+            }
+            self.repository.publish_complete_snapshot(studies, source_criteria)
 
         if not studies:
             status = IngestionStatus.FAILED

@@ -26,7 +26,7 @@ Implement on `feature/clinical-intelligence`. Check a task only after its accept
   - Add success, validation, empty-result, freshness, and shared-error contract tests.
   - _Requirements: R2, R6_
 
-- [ ] **C5. Implement structured extraction boundary**
+- [x] **C5. Implement structured extraction boundary**
   - Define supported vocabulary, provider protocol/configuration, prompt/schema versioning, and cache key.
   - Validate provider JSON strictly; preserve source text and uncertainty; reject malformed/unsupported shapes.
   - Add disabled/unavailable provider and cache fallback behavior.

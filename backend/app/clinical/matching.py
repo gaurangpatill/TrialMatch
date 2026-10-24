@@ -12,9 +12,14 @@ from .models import (
     CriterionClassification,
     CriterionOperator,
     CriterionStatus,
+    ExtractionCoverageStatus,
+    ExtractionCoverageSummary,
+    ExtractionPayload,
     MatchResponse,
+    Predicate,
     ScreeningStatus,
     StructuredCriterion,
+    Study,
     SyntheticPatient,
     TrialMatchResult,
 )
@@ -52,6 +57,7 @@ class MatchingService:
         results: list[TrialMatchResult] = []
         for study in studies:
             criteria = self.repository.get_criteria(study.nct_id, source_hash=study.source_hash)
+            coverage, coverage_gaps = extraction_coverage(self.repository, study)
             evaluations = [evaluate_criterion(criterion, patient) for criterion in criteria]
             mismatches = [
                 evaluation.original_text
@@ -63,6 +69,9 @@ class MatchingService:
                 for evaluation in evaluations
                 if evaluation.status == CriterionStatus.UNKNOWN
             ]
+            unresolved.extend(coverage_gaps)
+            if coverage.status != ExtractionCoverageStatus.COMPLETE:
+                unresolved.append(coverage.reason)
             questions = [
                 missing_question(criterion)
                 for criterion, evaluation in zip(criteria, evaluations, strict=True)
@@ -72,8 +81,12 @@ class MatchingService:
             unresolved.extend(contradictions)
             if mismatches:
                 status = ScreeningStatus.KNOWN_MISMATCH
-            elif evaluations and not unresolved and all(
-                evaluation.status == CriterionStatus.MET for evaluation in evaluations
+            elif (
+                coverage.status == ExtractionCoverageStatus.COMPLETE
+                and coverage.evaluable_criterion_count > 0
+                and evaluations
+                and not unresolved
+                and all(evaluation.status == CriterionStatus.MET for evaluation in evaluations)
             ):
                 status = ScreeningStatus.POTENTIAL_MATCH
             else:
@@ -86,6 +99,7 @@ class MatchingService:
                     nct_id=study.nct_id,
                     title=study.title,
                     screening_status=status,
+                    extraction_coverage=coverage,
                     criteria=evaluations,
                     known_mismatches=list(dict.fromkeys(mismatches)),
                     unresolved_requirements=list(dict.fromkeys(unresolved)),
@@ -94,6 +108,89 @@ class MatchingService:
                 )
             )
         return MatchResponse(profile_id=patient.profile_id, results=results, generated_at=self.clock())
+
+
+def extraction_coverage(
+    repository: ClinicalRepository, study: Study
+) -> tuple[ExtractionCoverageSummary, list[str]]:
+    state, raw_payload, coverage_verified, verification_method = repository.get_extraction_state(
+        study.nct_id, study.source_hash
+    )
+    if state == "accepted" and raw_payload is not None:
+        try:
+            payload = ExtractionPayload.model_validate(raw_payload)
+        except Exception:
+            state = "failed"
+        else:
+            evaluable = sum(_predicate_is_evaluable(item.predicate) for item in payload.criteria)
+            unsupported = len(payload.criteria) - evaluable
+            uncovered = payload.coverage.uncovered_items
+            declared_status = ExtractionCoverageStatus(payload.coverage.status)
+            status = (
+                ExtractionCoverageStatus.COMPLETE
+                if declared_status == ExtractionCoverageStatus.COMPLETE and coverage_verified
+                else ExtractionCoverageStatus.PARTIAL
+            )
+            if declared_status == ExtractionCoverageStatus.COMPLETE and not coverage_verified:
+                reason = (
+                    "The provider declared every segmented protocol item accounted for, but no "
+                    "independent complete-coverage verification is recorded."
+                )
+            elif status == ExtractionCoverageStatus.COMPLETE and not unsupported:
+                reason = (
+                    "Every explicitly enumerated protocol item in the accepted current-source "
+                    "coverage record is independently verified and represented by a supported criterion."
+                )
+            elif status == ExtractionCoverageStatus.COMPLETE:
+                reason = (
+                    f"Coverage is independently verified for all enumerated protocol items, but "
+                    f"{unsupported} requirement(s) are unsupported by deterministic evaluation."
+                )
+            else:
+                reason = (
+                    f"Eligibility extraction is partial: {len(uncovered)} explicitly enumerated "
+                    "protocol requirement(s) remain unprocessed."
+                )
+            return (
+                ExtractionCoverageSummary(
+                    status=status,
+                    protocol_item_count=payload.coverage.protocol_item_count,
+                    accounted_item_count=payload.coverage.accounted_item_count,
+                    evaluable_criterion_count=evaluable,
+                    unsupported_protocol_requirement_count=unsupported,
+                    uncovered_protocol_requirement_count=len(uncovered),
+                    independently_verified=coverage_verified,
+                    verification_method=verification_method,
+                    reason=reason,
+                ),
+                [
+                    f"Unprocessed protocol requirement: {item.original_text} ({item.reason})"
+                    for item in uncovered
+                ],
+            )
+    if state == "failed":
+        status = ExtractionCoverageStatus.FAILED
+        reason = "The latest current-source extraction attempt failed validation or provider access."
+    elif state == "stale":
+        status = ExtractionCoverageStatus.STALE
+        reason = "Only extraction coverage from an older study source version is available."
+    else:
+        status = ExtractionCoverageStatus.NOT_ATTEMPTED
+        reason = (
+            "Detailed eligibility text has not been acquired for this study."
+            if not study.eligibility_criteria
+            else "No accepted current-source full-protocol extraction coverage record is available."
+        )
+    return ExtractionCoverageSummary(status=status, reason=reason), []
+
+
+def _predicate_is_evaluable(predicate: Predicate) -> bool:
+    operator = predicate.operator
+    if operator == CriterionOperator.UNSUPPORTED:
+        return False
+    if operator in {CriterionOperator.ALL, CriterionOperator.ANY}:
+        return all(_predicate_is_evaluable(child) for child in predicate.children)
+    return predicate.attribute != CriterionAttribute.UNSUPPORTED
 
 
 def find_contradictions(criteria: list[StructuredCriterion]) -> list[str]:

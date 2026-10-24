@@ -69,7 +69,8 @@
           "query.locn=Massachusetts",
           "filter.overallStatus=RECRUITING",
           "excluded_source_records=0",
-          "expanded_detail_records=100"
+          "expanded_detail_records=100",
+          "detail_selection=title_or_condition_contains:cancer;stable_order=nct_id"
         ]
       }
     },

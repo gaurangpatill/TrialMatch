@@ -34,8 +34,15 @@ class FailingSameIdentityProvider:
 def valid_payload(nct_id="NCT00000001"):
     return {
         "nct_id": nct_id,
+        "coverage": {
+            "status": "complete",
+            "protocol_item_count": 1,
+            "accounted_item_count": 1,
+            "uncovered_items": [],
+        },
         "criteria": [
             {
+                "source_item_id": "item-001",
                 "classification": "inclusion",
                 "original_text": "Participants must be 18 years or older.",
                 "predicate": {
@@ -111,4 +118,43 @@ async def test_invalid_structured_llm_response_is_rejected(
     mutate(payload)
 
     with pytest.raises(InvalidExtraction, match=match):
+        await EligibilityExtractor(repository, FakeProvider(payload)).extract(study)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        {
+            "status": "complete",
+            "protocol_item_count": 2,
+            "accounted_item_count": 1,
+            "uncovered_items": [],
+        },
+        {
+            "status": "partial",
+            "protocol_item_count": 1,
+            "accounted_item_count": 1,
+            "uncovered_items": [],
+        },
+        {
+            "status": "complete",
+            "protocol_item_count": 2,
+            "accounted_item_count": 1,
+            "uncovered_items": [
+                {"source_item_id": "item-002", "original_text": "Invented gap", "reason": "not parsed"}
+            ],
+        },
+    ],
+)
+async def test_coverage_declaration_must_reconcile_and_preserve_source(
+    coverage, study_factory, tmp_path
+):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    study = study_factory()
+    repository.upsert_studies([study])
+    payload = valid_payload()
+    payload["coverage"] = coverage
+
+    with pytest.raises(InvalidExtraction):
         await EligibilityExtractor(repository, FakeProvider(payload)).extract(study)
