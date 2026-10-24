@@ -27,6 +27,9 @@ async def test_paginates_and_deduplicates_nct_ids(source_record_factory, tmp_pat
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert {"MinimumAge", "MaximumAge", "Sex"} <= set(
+            request.url.params["fields"].split(",")
+        )
         return httpx.Response(200, json=pages.get(request.url.params.get("pageToken")), request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -118,12 +121,20 @@ def test_normalization_preserves_source_fields_and_evidence(source_record_factor
     study = normalize_study(record)
     assert study.nct_id == "NCT00000001"
     assert study.title == "Full Official Synthetic Study Title"
+    assert study.source_description == "This official source text describes the synthetic study purpose."
     assert study.eligibility_criteria == "Participants must be 18 years or older."
     assert study.locations[0].facility == "Synthetic Facility"
     assert study.locations[0].recruiting_status == "RECRUITING"
     assert study.contacts[0].email == "test@example.invalid"
     assert study.source_url.endswith(study.nct_id)
     assert study.raw_source["protocolSection"]["eligibilityModule"]["minimumAge"] == "18 Years"
+
+
+def test_not_applicable_phase_is_canonicalized_without_changing_raw_source(source_record_factory):
+    record = source_record_factory(phases=["NA"])
+    study = normalize_study(record)
+    assert study.phases == ["NOT_APPLICABLE"]
+    assert study.raw_source["protocolSection"]["designModule"]["phases"] == ["NA"]
 
 
 def test_missing_required_identity_field_is_rejected(source_record_factory):
@@ -162,6 +173,23 @@ def test_repository_search_is_deterministic(study_factory, tmp_path):
     assert studies[0].nct_id == "NCT00000002"
 
 
+def test_repository_age_and_phase_filters_handle_open_bounds(study_factory, tmp_path):
+    repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
+    repository.upsert_studies(
+        [
+            study_factory("NCT00000001", minimum_age="18 Years", maximum_age=None, phases=["NA"]),
+            study_factory("NCT00000002", minimum_age=None, maximum_age="12 Years"),
+            study_factory("NCT00000003", minimum_age=None, maximum_age=None),
+        ]
+    )
+    adult, adult_total = repository.search_studies(age_years=40)
+    child, child_total = repository.search_studies(age_years=10)
+    not_applicable, phase_total = repository.search_studies(phase="NA")
+    assert adult_total == 1 and [study.nct_id for study in adult] == ["NCT00000001"]
+    assert child_total == 1 and [study.nct_id for study in child] == ["NCT00000002"]
+    assert phase_total == 1 and not_applicable[0].phases == ["NOT_APPLICABLE"]
+
+
 def test_list_snapshot_does_not_overwrite_expanded_detail_or_criteria(
     source_record_factory, tmp_path
 ):
@@ -175,6 +203,7 @@ def test_list_snapshot_does_not_overwrite_expanded_detail_or_criteria(
     indexed_record = source_record_factory(title="Updated list-only title")
     indexed_record["protocolSection"].pop("eligibilityModule")
     indexed_record["protocolSection"].pop("contactsLocationsModule")
+    indexed_record["protocolSection"].pop("descriptionModule")
     indexed = normalize_study(indexed_record)
     repository.publish_complete_snapshot([indexed], {indexed.nct_id: []})
 

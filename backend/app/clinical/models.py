@@ -49,6 +49,13 @@ class SourceStatus(BaseModel):
     overall_status: str | None = Field(default=None, alias="overallStatus")
 
 
+class SourceDescription(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    brief_summary: str | None = Field(default=None, alias="briefSummary")
+    detailed_description: str | None = Field(default=None, alias="detailedDescription")
+
+
 class SourceConditions(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -111,6 +118,9 @@ class SourceProtocol(BaseModel):
 
     identification: SourceIdentification = Field(alias="identificationModule")
     status: SourceStatus = Field(default_factory=SourceStatus, alias="statusModule")
+    description: SourceDescription = Field(
+        default_factory=SourceDescription, alias="descriptionModule"
+    )
     conditions: SourceConditions = Field(default_factory=SourceConditions, alias="conditionsModule")
     design: SourceDesign = Field(default_factory=SourceDesign, alias="designModule")
     eligibility: SourceEligibility = Field(default_factory=SourceEligibility, alias="eligibilityModule")
@@ -158,6 +168,7 @@ class Study(StrictModel):
     overall_status: str = Field(min_length=1)
     conditions: list[str] = Field(default_factory=list)
     phases: list[str] = Field(default_factory=list)
+    source_description: str | None = None
     eligibility_criteria: str | None = None
     minimum_age: str | None = None
     maximum_age: str | None = None
@@ -171,6 +182,20 @@ class Study(StrictModel):
     detail_status: DetailRetrievalStatus = DetailRetrievalStatus.NOT_RETRIEVED
     detail_attempted_at: datetime | None = None
     detail_error_code: str | None = None
+
+
+class PlainLanguageSummaryPayload(StrictModel):
+    nct_id: str = Field(pattern=r"^NCT\d{8}$")
+    source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    plain_language_summary: str = Field(min_length=1, max_length=1200)
+
+    @field_validator("plain_language_summary")
+    @classmethod
+    def summary_must_not_be_blank(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("plain_language_summary must not be blank")
+        return cleaned
 
 
 class IngestionStatus(str, Enum):
@@ -552,6 +577,8 @@ class StudySummary(StrictModel):
     overall_status: str
     conditions: list[str]
     phases: list[str]
+    source_description: str | None
+    plain_language_summary: str | None
     minimum_age: str | None
     maximum_age: str | None
     sex: str | None
@@ -608,6 +635,8 @@ class StudyDetailResponse(StrictModel):
     overall_status: str
     conditions: list[str]
     phases: list[str]
+    source_description: str | None
+    plain_language_summary: str | None
     eligibility_criteria: str | None
     minimum_age: str | None
     maximum_age: str | None

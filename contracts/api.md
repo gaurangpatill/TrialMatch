@@ -71,7 +71,9 @@ Query parameters:
 |---|---|---:|---|
 | `query` | string | null | Title/condition text; trimmed, max 200 chars |
 | `condition` | string | null | Exact or documented normalized condition filter |
-| `phase` | string | null | Source phase value |
+| `phase` | string | null | Canonical source phase; `NA` and `NOT_APPLICABLE` filter the canonical `NOT_APPLICABLE` value |
+| `age_years` | number | null | `0..125`; matches each available published bound independently and excludes records with neither bound |
+| `location` | string | null | Facility, city, state, or country substring; returned locations remain the complete source list |
 | `page` | integer | 1 | `>= 1` |
 | `page_size` | integer | 20 | `1..100` |
 
@@ -86,6 +88,8 @@ Query parameters:
       "overall_status": "RECRUITING",
       "conditions": ["Example condition"],
       "phases": ["PHASE2"],
+      "source_description": "Official study-purpose text from ClinicalTrials.gov.",
+      "plain_language_summary": null,
       "minimum_age": "18 Years",
       "maximum_age": null,
       "sex": "ALL",
@@ -109,7 +113,9 @@ Query parameters:
 }
 ```
 
-`total_items` is an observed accepted count for the applied local query, never the approximate challenge count.
+`total_items` is an observed accepted count for the applied local query, never the approximate challenge count. `source_description` is nullable official purpose text (brief summary preferred, then detailed description). `plain_language_summary` is nullable and is served only from a validated cache for the current source hash; search and detail reads never invoke an LLM. Cached summaries are explanatory text, not eligibility evidence, and the official source text/link remains authoritative.
+
+`GET /api/trials/{nct_id}` returns the same summary fields plus eligibility text, contacts, retrieval provenance, and extraction coverage. It may retrieve one official detail record when expansion is missing or explicitly refreshed; it does not trigger paid model calls. Facility arrays preserve all source locations. Consumers must identify Massachusetts facilities from the explicit state field and must not label the worldwide array as Massachusetts-only.
 
 ---
 
@@ -269,59 +275,31 @@ Query parameters:
 
 ## `POST /api/optimize`
 
-Optimizer ownership. Solves a documented outreach location selection model with SciPy MILP and compares it to a baseline.
+Optimizer ownership. Solves a fixed, persisted Massachusetts EJ-subset outreach scenario with SciPy MILP. Public callers may tune only bounded scenario controls; they cannot submit arbitrary matrices, costs, or candidates.
 
 **Request**
 
 ```json
 {
-  "candidate_location_ids": ["BOSTON", "WORCESTER", "SPRINGFIELD"],
-  "budget": 100000,
-  "max_locations": 2,
-  "location_costs": {
-    "BOSTON": 60000,
-    "WORCESTER": 40000,
-    "SPRINGFIELD": 35000
-  },
-  "objective_weights": {
-    "modeled_population_coverage": 1.0,
-    "environmental_justice_access": 1.0
-  },
-  "constraints": []
+  "max_events": 3,
+  "coverage_radius_km": 25,
+  "equity_weight": 0.6
 }
 ```
 
-Rules: IDs must be unique and known; costs and budget are finite/non-negative; `max_locations` is a positive integer no greater than candidate count; objective terms and units must be documented; unsupported constraints are rejected rather than ignored.
+Rules:
 
-**200 response**
+- `max_events` is an integer from `0..20`.
+- `coverage_radius_km` is finite and from `0..200`.
+- `equity_weight` is finite and from `0..1`.
+- Optional `condition` is accepted only to return an explicit `409`; condition-specific optimization is unsupported because no validated condition-specific demand/access-gap term exists. Condition-filtered `/api/geo` indicators and the optimizer remain independent.
+- Requests are limited per client/process. `429` uses the common envelope and includes `Retry-After`. The prototype limiter resets on process restart and is not a distributed quota.
 
-```json
-{
-  "run_id": "01JAZ...",
-  "status": "optimal",
-  "selected_location_ids": ["WORCESTER", "SPRINGFIELD"],
-  "total_cost": 75000,
-  "objective_value": 1234.5,
-  "modeled_coverage": {
-    "population": 120000,
-    "environmental_justice_block_groups": 18
-  },
-  "baseline": {
-    "method": "highest_modeled_population_first",
-    "selected_location_ids": ["BOSTON", "WORCESTER"],
-    "objective_value": 1100.0
-  },
-  "solver": {
-    "name": "scipy.optimize.milp",
-    "termination_message": "Optimization terminated successfully.",
-    "mip_gap": 0.0
-  },
-  "assumptions": ["Coverage values are modeled inputs, not observed enrollment."],
-  "generated_at": "2026-10-24T17:45:00Z"
-}
-```
+The `200` response includes solver status, selected municipality analytical points, exact covered municipality IDs/counts, modeled EJ-subset population proxy and weighted objective, equal abstract event costs, baseline comparisons, constraint checks, assumptions, limitations, scenario construction, and persisted-source provenance. Municipality representatives are analytical points, not verified outreach venues. Results are modeled outreach coverage, not observed enrollment.
 
-`status`: `optimal | feasible | infeasible | unbounded | solver_error`. A mathematically infeasible request may return `200` with `status: "infeasible"` and no selections when the optimization ran correctly; invalid inputs use `400/422`. Never label a non-optimal result as optimal.
+`status`: `optimal | feasible | infeasible | unbounded | solver_error`. A mathematically infeasible request may return `200` with `status: "infeasible"` and no selections when the optimization ran correctly. Invalid inputs use `422`; unavailable persisted data uses `503`. Never label a non-optimal result as optimal.
+
+All geography `409` and `503` failures use the common error envelope. Geography summary provenance distinguishes export input/schema-accepted rows from producer source locations, explicit Massachusetts locations, status/name exclusions, duplicates, and final condition-filtered rows. Legacy count fields remain temporarily for compatibility.
 
 ## Contract acceptance
 

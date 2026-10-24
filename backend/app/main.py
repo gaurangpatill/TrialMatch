@@ -11,7 +11,11 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.app.clinical.models import ErrorBody, ErrorDetail, ErrorResponse
 from backend.app.clinical.router import router as clinical_router
-from backend.app.geography.router import geography_router
+from backend.app.geography.router import (
+    GeographyAPIError,
+    geography_api_error_handler,
+    geography_router,
+)
 
 
 class HealthResponse(BaseModel):
@@ -29,6 +33,8 @@ app = FastAPI(
     description="Source-grounded TrialMatch research-access prototype API.",
     version="0.1.0",
 )
+
+app.add_exception_handler(GeographyAPIError, geography_api_error_handler)
 
 app.add_middleware(
     CORSMiddleware,

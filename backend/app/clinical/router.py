@@ -68,6 +68,10 @@ def search_trials(
                 overall_status=study.overall_status,
                 conditions=study.conditions,
                 phases=study.phases,
+                source_description=study.source_description,
+                plain_language_summary=repository.get_current_summary(
+                    study.nct_id, study.source_hash
+                ),
                 minimum_age=study.minimum_age,
                 maximum_age=study.maximum_age,
                 sex=study.sex,
@@ -136,6 +140,8 @@ async def get_trial_detail(
         overall_status=study.overall_status,
         conditions=study.conditions,
         phases=study.phases,
+        source_description=study.source_description,
+        plain_language_summary=repository.get_current_summary(study.nct_id, study.source_hash),
         eligibility_criteria=study.eligibility_criteria,
         minimum_age=study.minimum_age,
         maximum_age=study.maximum_age,

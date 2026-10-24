@@ -19,7 +19,7 @@ from .models import SourcePage, SourceStudy
 
 
 DEFAULT_BASE_URL = "https://clinicaltrials.gov/api/v2"
-LIST_FIELDS = "NCTId,BriefTitle,OverallStatus,Condition,Phase"
+LIST_FIELDS = "NCTId,BriefTitle,OverallStatus,Condition,Phase,MinimumAge,MaximumAge,Sex"
 
 
 class ClinicalTrialsSourceError(RuntimeError):

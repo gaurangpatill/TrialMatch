@@ -94,7 +94,11 @@ def normalize_study(
         title=(identification.official_title or identification.brief_title).strip(),
         overall_status=status.strip(),
         conditions=[value.strip() for value in source.protocol.conditions.conditions if value.strip()],
-        phases=[value.strip() for value in source.protocol.design.phases if value.strip()],
+        phases=[normalize_phase(value) for value in source.protocol.design.phases if value.strip()],
+        source_description=_source_description(
+            source.protocol.description.brief_summary,
+            source.protocol.description.detailed_description,
+        ),
         eligibility_criteria=eligibility.eligibility_criteria,
         minimum_age=eligibility.minimum_age,
         maximum_age=eligibility.maximum_age,
@@ -196,6 +200,22 @@ def _criterion(
         source_hash=study.source_hash,
         created_at=created_at,
     )
+
+
+def normalize_phase(value: str) -> str:
+    """Canonicalize known registry phase aliases while raw source remains unchanged."""
+
+    normalized = value.strip().upper().replace(" ", "_")
+    if normalized in {"NA", "N/A", "NOT_APPLICABLE"}:
+        return "NOT_APPLICABLE"
+    return normalized
+
+
+def _source_description(brief: str | None, detailed: str | None) -> str | None:
+    for value in (brief, detailed):
+        if value and value.strip():
+            return value.strip()
+    return None
 
 
 def _age_to_years(value: str | None) -> float | None:

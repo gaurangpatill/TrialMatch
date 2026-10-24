@@ -112,6 +112,28 @@ class SiteExportMetadata(StrictModel):
     deduplication_key: str
     limitations: list[str]
 
+    @model_validator(mode="after")
+    def producer_counts_reconcile(self) -> SiteExportMetadata:
+        if self.expanded_study_count > self.source_snapshot_study_count:
+            raise ValueError("expanded study count cannot exceed source snapshot study count")
+        if self.explicit_massachusetts_location_count > self.source_location_count:
+            raise ValueError("Massachusetts location count cannot exceed all source locations")
+        accounted_massachusetts = (
+            self.excluded_non_recruiting_or_unknown_site_status_count
+            + self.excluded_missing_facility_name_count
+            + self.duplicate_record_count
+            + self.exported_record_count
+        )
+        if accounted_massachusetts != self.explicit_massachusetts_location_count:
+            raise ValueError("Massachusetts source location stages must reconcile")
+        if self.exported_study_count > self.expanded_study_count:
+            raise ValueError("exported study count cannot exceed expanded study count")
+        if self.resolved_coordinate_count + self.unresolved_coordinate_count != self.exported_record_count:
+            raise ValueError("coordinate counts must equal exported records")
+        if self.invalid_source_coordinate_count > self.unresolved_coordinate_count:
+            raise ValueError("invalid source coordinate count cannot exceed unresolved records")
+        return self
+
 
 class TrialSiteExport(StrictModel):
     metadata: SiteExportMetadata

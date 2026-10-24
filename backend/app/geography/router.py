@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import Field, field_validator
+
+from backend.app.clinical.models import ErrorBody, ErrorResponse
 
 from backend.app.optimizer import BaselineResult, OptimizationResult, build_formulation, optimize
 from backend.app.optimizer.models import ConstraintSatisfaction, OptimizationScenario, SolverDetails
@@ -130,6 +135,12 @@ class GeoSummary(StrictModel):
     clinical_site_deduplicated_count: int | None = Field(default=None, ge=0)
     clinical_site_quarantined_count: int | None = Field(default=None, ge=0)
     clinical_site_source_record_count: int | None = Field(default=None, ge=0)
+    clinical_site_export_input_record_count: int | None = Field(default=None, ge=0)
+    clinical_site_producer_source_location_count: int | None = Field(default=None, ge=0)
+    clinical_site_producer_explicit_massachusetts_location_count: int | None = Field(default=None, ge=0)
+    clinical_site_producer_excluded_status_count: int | None = Field(default=None, ge=0)
+    clinical_site_producer_excluded_missing_facility_count: int | None = Field(default=None, ge=0)
+    clinical_site_producer_duplicate_record_count: int | None = Field(default=None, ge=0)
     clinical_site_schema_accepted_count: int | None = Field(default=None, ge=0)
     clinical_site_massachusetts_recruiting_retained_count: int | None = Field(default=None, ge=0)
     clinical_site_retained_count: int | None = Field(default=None, ge=0)
@@ -231,6 +242,61 @@ class OptimizeResponse(StrictModel):
     generated_at: datetime
 
 
+class FixedWindowRateLimiter:
+    """Bound optimizer work per process without introducing distributed infrastructure."""
+
+    def __init__(
+        self,
+        limit: int = 10,
+        window_seconds: float = 60.0,
+        clock: Callable[[], float] = monotonic,
+    ):
+        if limit < 1 or window_seconds <= 0:
+            raise ValueError("rate limit and window must be positive")
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.clock = clock
+        self._requests: dict[str, list[float]] = {}
+        self._lock = Lock()
+
+    def check(self, key: str) -> float | None:
+        now = self.clock()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            recent = [timestamp for timestamp in self._requests.get(key, []) if timestamp > cutoff]
+            if len(recent) >= self.limit:
+                self._requests[key] = recent
+                return max(0.0, self.window_seconds - (now - recent[0]))
+            recent.append(now)
+            self._requests[key] = recent
+            return None
+
+
+class GeographyAPIError(Exception):
+    def __init__(self, status_code: int, code: str, message: str, *, retryable: bool):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+
+
+async def geography_api_error_handler(request: Request, exc: GeographyAPIError) -> JSONResponse:
+    request_id = request.headers.get("x-request-id") or sha256(
+        f"{datetime.now(timezone.utc).isoformat()}:{id(request)}".encode()
+    ).hexdigest()[:32]
+    payload = ErrorResponse(
+        error=ErrorBody(
+            code=exc.code,
+            message=exc.message,
+            details=[],
+            retryable=exc.retryable,
+            request_id=request_id,
+        )
+    )
+    return JSONResponse(status_code=exc.status_code, content=payload.model_dump(mode="json"))
+
+
 @dataclass(frozen=True)
 class GeographyRuntime:
     """Injectable file/solver boundary used by production and TestClient tests."""
@@ -239,6 +305,9 @@ class GeographyRuntime:
     point_snapshot_path: str | Path = DEFAULT_SNAPSHOT_PATH
     site_export_path: str | Path | None = None
     optimizer: Callable[..., OptimizationResult] = optimize
+    optimizer_rate_limiter: FixedWindowRateLimiter = field(
+        default_factory=FixedWindowRateLimiter
+    )
 
     def load_aggregates(self) -> MunicipalityAggregateSnapshot:
         return load_aggregate_snapshot(self.aggregate_snapshot_path)
@@ -261,20 +330,19 @@ def get_geography_runtime() -> GeographyRuntime:
     return _DEFAULT_RUNTIME
 
 
-def _condition_conflict(message: str, code: str) -> HTTPException:
-    return HTTPException(status_code=409, detail={"code": code, "message": message})
+def _condition_conflict(message: str, code: str) -> GeographyAPIError:
+    return GeographyAPIError(409, code, message, retryable=False)
 
 
 def _load_persisted(runtime: GeographyRuntime) -> tuple[MunicipalityAggregateSnapshot, MunicipalityPointSnapshot]:
     try:
         return runtime.load_aggregates(), runtime.load_points()
     except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "GEOGRAPHY_SNAPSHOT_UNAVAILABLE",
-                "message": f"Persisted geography snapshot could not be loaded: {exc}",
-            },
+        raise GeographyAPIError(
+            503,
+            "GEOGRAPHY_SNAPSHOT_UNAVAILABLE",
+            "Persisted geography data is temporarily unavailable.",
+            retryable=True,
         ) from exc
 
 
@@ -282,12 +350,11 @@ def _load_sites(runtime: GeographyRuntime) -> SiteExportResult:
     try:
         return runtime.load_sites()
     except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "CLINICAL_SITE_EXPORT_INVALID",
-                "message": f"Clinical site export could not be loaded: {exc}",
-            },
+        raise GeographyAPIError(
+            503,
+            "CLINICAL_SITE_EXPORT_INVALID",
+            "Clinical site data is temporarily unavailable.",
+            retryable=True,
         ) from exc
 
 
@@ -429,7 +496,9 @@ def get_geo(
     aggregates_snapshot, points_snapshot = _load_persisted(runtime)
     normalized_condition = condition.strip() if condition is not None else None
     if condition is not None and not normalized_condition:
-        raise HTTPException(status_code=422, detail={"code": "VALIDATION_ERROR", "message": "condition must not be blank"})
+        raise GeographyAPIError(
+            422, "VALIDATION_ERROR", "Request validation failed.", retryable=False
+        )
     sites = _load_sites(runtime)
     if normalized_condition is not None and not sites.report.available:
         raise _condition_conflict(
@@ -541,6 +610,28 @@ def get_geo(
             clinical_site_deduplicated_count=(adapted_report.deduplicated_count if adapted_report else None),
             clinical_site_quarantined_count=sites.report.quarantined_count,
             clinical_site_source_record_count=sites.report.input_count,
+            clinical_site_export_input_record_count=sites.report.input_count,
+            clinical_site_producer_source_location_count=(
+                export_metadata.source_location_count if export_metadata else None
+            ),
+            clinical_site_producer_explicit_massachusetts_location_count=(
+                export_metadata.explicit_massachusetts_location_count
+                if export_metadata
+                else None
+            ),
+            clinical_site_producer_excluded_status_count=(
+                export_metadata.excluded_non_recruiting_or_unknown_site_status_count
+                if export_metadata
+                else None
+            ),
+            clinical_site_producer_excluded_missing_facility_count=(
+                export_metadata.excluded_missing_facility_name_count
+                if export_metadata
+                else None
+            ),
+            clinical_site_producer_duplicate_record_count=(
+                export_metadata.duplicate_record_count if export_metadata else None
+            ),
             clinical_site_schema_accepted_count=sites.report.accepted_count,
             clinical_site_massachusetts_recruiting_retained_count=(
                 catalog_report.deduplicated_count if catalog_report else None
@@ -593,11 +684,37 @@ def get_geo(
     )
 
 
-@geography_router.post("/optimize", response_model=OptimizeResponse)
+@geography_router.post(
+    "/optimize",
+    response_model=OptimizeResponse,
+    responses={409: {"model": ErrorResponse}, 429: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
 def post_optimize(
     request: OptimizeRequest,
+    http_request: Request,
     runtime: GeographyRuntime = Depends(get_geography_runtime),
-) -> OptimizeResponse:
+) -> OptimizeResponse | JSONResponse:
+    client_key = http_request.client.host if http_request.client else "unknown"
+    retry_after = runtime.optimizer_rate_limiter.check(client_key)
+    if retry_after is not None:
+        seconds = max(1, int(retry_after + 0.999))
+        request_id = http_request.headers.get("x-request-id") or sha256(
+            f"{datetime.now(timezone.utc).isoformat()}:{id(http_request)}".encode()
+        ).hexdigest()[:32]
+        payload = ErrorResponse(
+            error=ErrorBody(
+                code="RATE_LIMIT_EXCEEDED",
+                message="Too many optimization requests. Try again later.",
+                details=[],
+                retryable=True,
+                request_id=request_id,
+            )
+        )
+        return JSONResponse(
+            status_code=429,
+            content=payload.model_dump(mode="json"),
+            headers={"Retry-After": str(seconds)},
+        )
     aggregates_snapshot, points_snapshot = _load_persisted(runtime)
     if request.condition is not None:
         sites = _load_sites(runtime)

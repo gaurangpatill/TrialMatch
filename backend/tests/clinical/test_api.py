@@ -31,6 +31,8 @@ def test_trial_search_contract(study_factory, tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["items"][0]["nct_id"] == study.nct_id
+    assert body["items"][0]["source_description"] == study.source_description
+    assert body["items"][0]["plain_language_summary"] is None
     assert body["pagination"] == {"page": 1, "page_size": 10, "total_items": 1, "total_pages": 1}
     assert body["data_freshness"]["source"] == "ClinicalTrials.gov"
 
@@ -110,9 +112,19 @@ def test_validation_error_uses_shared_envelope(tmp_path):
     assert body["request_id"]
 
 
-def test_trial_detail_uses_expanded_local_record(study_factory, tmp_path):
+def test_trial_detail_uses_expanded_local_record(source_record_factory, tmp_path):
     repository = ClinicalRepository(tmp_path / "clinical.sqlite3")
-    study = study_factory()
+    record = source_record_factory()
+    record["protocolSection"]["contactsLocationsModule"]["locations"].append(
+        {
+            "facility": "Synthetic International Facility",
+            "status": "ACTIVE_NOT_RECRUITING",
+            "city": "Toronto",
+            "state": "Ontario",
+            "country": "Canada",
+        }
+    )
+    study = normalize_study(record)
     repository.upsert_studies([study])
 
     with client_with_repository(repository) as client:
@@ -125,8 +137,14 @@ def test_trial_detail_uses_expanded_local_record(study_factory, tmp_path):
     assert body["retrieval_source"] == "local_database"
     assert body["minimum_age"] == "18 Years"
     assert body["sex"] == "ALL"
+    assert body["source_description"] == (
+        "This official source text describes the synthetic study purpose."
+    )
+    assert body["plain_language_summary"] is None
+    assert len(body["locations"]) == 2
     assert body["locations"][0]["facility"] == "Synthetic Facility"
     assert body["locations"][0]["recruiting_status"] == "RECRUITING"
+    assert body["locations"][1]["country"] == "Canada"
     assert body["contacts"][0]["email"] == "test@example.invalid"
 
 
@@ -138,6 +156,7 @@ async def test_detail_fetch_is_deduplicated_and_persisted(
     indexed = source_record_factory()
     indexed["protocolSection"].pop("eligibilityModule")
     indexed["protocolSection"].pop("contactsLocationsModule")
+    indexed["protocolSection"].pop("descriptionModule")
     repository.upsert_studies([normalize_study(indexed)])
     detail_record = source_record_factory()
     calls = 0
@@ -181,6 +200,7 @@ def test_trial_detail_retrieval_failure_keeps_missing_values_unknown(
     indexed = source_record_factory()
     indexed["protocolSection"].pop("eligibilityModule")
     indexed["protocolSection"].pop("contactsLocationsModule")
+    indexed["protocolSection"].pop("descriptionModule")
     study = normalize_study(indexed)
     repository.upsert_studies([study])
 
