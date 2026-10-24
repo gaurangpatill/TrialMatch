@@ -2,6 +2,9 @@
   "name": "trialmatch-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,6 +19,7 @@
     "react-dom": "19.0.0"
   },
   "devDependencies": {
+    "@rolldown/binding-wasm32-wasi": "1.2.15",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "22.13.14",
     "@types/react": "19.0.12",
