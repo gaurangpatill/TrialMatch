@@ -1,0 +1,97 @@
+{
+  "manifest_version": "1.0",
+  "project": "TrialMatch",
+  "last_updated_utc": null,
+  "sources": [
+    {
+      "id": "clinicaltrials-gov-ma-recruiting",
+      "name": "ClinicalTrials.gov Massachusetts recruiting studies",
+      "authority": "U.S. National Library of Medicine",
+      "owner": "clinical-intelligence",
+      "data_classification": "public_study_records",
+      "official_url": "https://clinicaltrials.gov/api/v2/studies?query.locn=Massachusetts&filter.overallStatus=RECRUITING&pageSize=20&fields=NCTId,BriefTitle,OverallStatus,Condition,Phase",
+      "detail_url_template": "https://clinicaltrials.gov/api/v2/studies/{NCTId}",
+      "expected_approximate_count": 3131,
+      "expected_count_is_verified": false,
+      "pagination": {
+        "required": true,
+        "page_size": 20,
+        "response_token_field": "nextPageToken",
+        "request_token_parameter": "pageToken",
+        "completion_condition": "nextPageToken is absent"
+      },
+      "required_source_fields": [
+        "NCTId",
+        "BriefTitle",
+        "OverallStatus",
+        "Condition",
+        "Phase"
+      ],
+      "required_normalized_fields": [
+        "nct_id",
+        "title",
+        "overall_status",
+        "conditions",
+        "phase",
+        "eligibility_criteria",
+        "minimum_age",
+        "maximum_age",
+        "sex",
+        "facilities",
+        "locations",
+        "contacts",
+        "source_url",
+        "retrieved_at"
+      ],
+      "acquisition": {
+        "status": "not_acquired",
+        "acquired_at_utc": null,
+        "observed_record_count": null,
+        "accepted_record_count": null,
+        "duplicate_identifier_count": null,
+        "missing_value_counts": null,
+        "schema_valid": null,
+        "raw_sha256": null,
+        "filters_or_exclusions": []
+      }
+    },
+    {
+      "id": "massgis-ej2020-flagged-block-groups",
+      "name": "MassGIS EJ2020 Environmental Justice block groups",
+      "authority": "Massachusetts Bureau of Geographic Information (MassGIS)",
+      "owner": "geo-optimization",
+      "data_classification": "public_aggregate_community_data",
+      "official_url": "https://arcgisserver.digital.mass.gov/arcgisserver/rest/services/AGOL/EJ2020/MapServer/0/query?where=EJ%3D%27Yes%27&outFields=MUNICIPALITY,TOTAL_POP,PCT_MINORITY,LIMENGHHPCT,BG_MHHI,EJ,EJ_CRIT_DESC&returnGeometry=false&resultRecordCount=100&f=json",
+      "expected_approximate_count": 2604,
+      "expected_count_is_verified": false,
+      "pagination": {
+        "required": true,
+        "page_size": 100,
+        "offset_parameter": "resultOffset",
+        "page_size_parameter": "resultRecordCount",
+        "count_query_parameter": "returnCountOnly=true",
+        "completion_condition": "observed count reached or empty page with exceededTransferLimit false"
+      },
+      "required_source_fields": [
+        "MUNICIPALITY",
+        "TOTAL_POP",
+        "PCT_MINORITY",
+        "LIMENGHHPCT",
+        "BG_MHHI",
+        "EJ",
+        "EJ_CRIT_DESC"
+      ],
+      "acquisition": {
+        "status": "not_acquired",
+        "acquired_at_utc": null,
+        "observed_record_count": null,
+        "accepted_record_count": null,
+        "duplicate_identifier_count": null,
+        "missing_value_counts": null,
+        "schema_valid": null,
+        "raw_sha256": null,
+        "filters_or_exclusions": []
+      }
+    }
+  ]
+}
