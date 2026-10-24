@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0",
   "project": "TrialMatch",
-  "last_updated_utc": null,
+  "last_updated_utc": "2026-10-24T17:50:25.591629+00:00",
   "sources": [
     {
       "id": "clinicaltrials-gov-ma-recruiting",
@@ -44,15 +44,29 @@
         "retrieved_at"
       ],
       "acquisition": {
-        "status": "not_acquired",
-        "acquired_at_utc": null,
-        "observed_record_count": null,
-        "accepted_record_count": null,
-        "duplicate_identifier_count": null,
-        "missing_value_counts": null,
-        "schema_valid": null,
+        "status": "complete",
+        "acquired_at_utc": "2026-10-24T17:50:25.591629+00:00",
+        "observed_record_count": 3145,
+        "accepted_record_count": 3145,
+        "duplicate_identifier_count": 0,
+        "missing_value_counts": {
+          "Condition": 0,
+          "Contacts": 3125,
+          "EligibilityCriteria": 3125,
+          "Locations": 3125,
+          "MaximumAge": 3137,
+          "MinimumAge": 3136,
+          "Phase": 527,
+          "Sex": 3125
+        },
+        "schema_valid": true,
         "raw_sha256": null,
-        "filters_or_exclusions": []
+        "filters_or_exclusions": [
+          "query.locn=Massachusetts",
+          "filter.overallStatus=RECRUITING",
+          "excluded_source_records=0",
+          "expanded_detail_records=20"
+        ]
       }
     },
     {
